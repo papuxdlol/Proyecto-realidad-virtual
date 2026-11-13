@@ -1,4 +1,6 @@
 using UnityEngine;
+using Keyboard = UnityEngine.InputSystem.Keyboard;
+using Mouse = UnityEngine.InputSystem.Mouse;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
@@ -16,6 +18,7 @@ public class InterruptorLuz : MonoBehaviour
 
     private XRSimpleInteractable interactable;
     private bool rayoEncima = false;
+    private int ultimaInteraccionFrame = -1;
 
     void Awake()
     {
@@ -46,8 +49,13 @@ public class InterruptorLuz : MonoBehaviour
 
     void Update()
     {
-        // Si el láser VR está apuntando al switch y presionas Clic Izquierdo o tecla E/G en el Simulador, ¡prende!
-        if (rayoEncima && (Input.GetMouseButtonDown(0) || Input.GetKeyDown(KeyCode.G) || Input.GetKeyDown(KeyCode.E)))
+        Mouse mouse = Mouse.current;
+        Keyboard teclado = Keyboard.current;
+        bool entradaManual =
+            (mouse != null && mouse.leftButton.wasPressedThisFrame) ||
+            (teclado != null && (teclado.gKey.wasPressedThisFrame || teclado.eKey.wasPressedThisFrame));
+
+        if (rayoEncima && entradaManual)
         {
             ProcesarInteraccion(null);
         }
@@ -64,6 +72,9 @@ public class InterruptorLuz : MonoBehaviour
 
     private void ProcesarInteraccion(IXRInteractor interactor)
     {
+        if (ultimaInteraccionFrame == Time.frameCount) return;
+        ultimaInteraccionFrame = Time.frameCount;
+
         if (sonidoClick != null) sonidoClick.Play();
 
         if (interactor is XRBaseInputInteractor inputInteractor)
@@ -71,7 +82,8 @@ public class InterruptorLuz : MonoBehaviour
 
         if (bloqueadaPorAnomalia) return;
 
-        CambiarEstado(!estaEncendida);
+        bool estadoActual = luzDelCuarto != null ? luzDelCuarto.enabled : estaEncendida;
+        CambiarEstado(!estadoActual);
     }
 
     public void CambiarEstado(bool nuevoEstado)
@@ -86,23 +98,23 @@ public class InterruptorLuz : MonoBehaviour
 
     public void AlternarDesdeRayo()
     {
-        if (sonidoClick != null) sonidoClick.Play();
-        if (bloqueadaPorAnomalia) return;
-
-        // Si por alguna razón no tenía luz asignada, busca la Point Light más cercana en ese instante
         if (luzDelCuarto == null)
         {
             Light[] luces = FindObjectsByType<Light>(FindObjectsSortMode.None);
             float menorDist = Mathf.Infinity;
-            foreach (Light l in luces)
+            foreach (Light luz in luces)
             {
-                if (l.type != LightType.Point) continue;
-                float d = Vector3.Distance(transform.position, l.transform.position);
-                if (d < menorDist) { menorDist = d; luzDelCuarto = l; }
+                if (luz.type != LightType.Point) continue;
+
+                float distancia = Vector3.Distance(transform.position, luz.transform.position);
+                if (distancia < menorDist)
+                {
+                    menorDist = distancia;
+                    luzDelCuarto = luz;
+                }
             }
         }
 
-        CambiarEstado(!estaEncendida);
-        Debug.Log($"[SWITCH ACTIVADO] {name} -> Luz: {(luzDelCuarto != null ? luzDelCuarto.name : "Ninguna")} = {estaEncendida}");
+        ProcesarInteraccion(null);
     }
 }

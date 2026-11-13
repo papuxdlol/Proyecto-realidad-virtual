@@ -184,7 +184,7 @@ public class TabletSistemaVR : MonoBehaviour
 
             canvasObj.transform.localPosition = new Vector3(0f, 0.015f, 0f);
             canvasObj.transform.localRotation = Quaternion.Euler(90f, -90f, 0f);
-            canvasObj.transform.localScale = Vector3.one * 0.00035f;
+            canvasObj.transform.localScale = Vector3.one * 0.00008f;
         }
         else
         {
@@ -192,38 +192,63 @@ public class TabletSistemaVR : MonoBehaviour
                 tabletCanvas.gameObject.AddComponent<TrackedDeviceGraphicRaycaster>();
         }
 
+        tabletCanvas.transform.localRotation *= Quaternion.Euler(0f, 180f, 0f);
         tabletCanvas.renderMode = RenderMode.WorldSpace;
         tabletCanvas.worldCamera = Camera.main;
         tabletCanvas.sortingOrder = 100;
 
+        // La pantalla instalada ya tiene su escala y orientación ajustadas al modelo.
         RectTransform canvasRect = tabletCanvas.GetComponent<RectTransform>();
-        canvasRect.sizeDelta = new Vector2(680f, 1020f);
+        if (canvasRect.sizeDelta.x <= 0f || canvasRect.sizeDelta.y <= 0f)
+            canvasRect.sizeDelta = new Vector2(900f, 600f);
 
-        // CORREGIR ORIENTACIÓN Y EFECTO ESPEJO SOBRE EL MODELO 3D DE LA TABLET:
-        tabletCanvas.transform.localPosition = new Vector3(0f, 0.012f, 0f);
-        tabletCanvas.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-        tabletCanvas.transform.localScale = new Vector3(0.00028f, 0.00028f, 0.00028f);
-        canvasRect.sizeDelta = new Vector2(680f, 1020f);
+        Vector2 canvasSize = canvasRect.sizeDelta;
+        bool portrait = canvasSize.y > canvasSize.x;
+        float designWidth = portrait ? 680f : 900f;
+        float designHeight = portrait ? 1020f : 600f;
+        float uiScale = Mathf.Min(canvasSize.x / designWidth, canvasSize.y / designHeight);
 
         for (int i = tabletCanvas.transform.childCount - 1; i >= 0; i--)
             Destroy(tabletCanvas.transform.GetChild(i).gameObject);
 
-        CreateImage(tabletCanvas.transform, "Fondo_Pantalla", new Vector2(680f, 1020f), Vector2.zero, new Color(0.04f, 0.05f, 0.07f, 0.98f)).raycastTarget = false;
+        CreateImage(tabletCanvas.transform, "Fondo_Pantalla", canvasSize, Vector2.zero, new Color(0.04f, 0.05f, 0.07f, 0.98f)).raycastTarget = false;
 
         // 1. BARRA SUPERIOR (Reloj + Botón de Pausa)
-        GameObject barraSuperior = CreateRect("Barra_Superior", tabletCanvas.transform, new Vector2(680f, 80f), new Vector2(0f, 470f));
-        CreateImage(barraSuperior.transform, "Bg_Header", new Vector2(680f, 80f), Vector2.zero, new Color(0.09f, 0.1f, 0.14f, 1f)).raycastTarget = false;
+        float headerHeight = (portrait ? 80f : 58f) * uiScale;
+        float headerY = (designHeight * 0.5f - (portrait ? 40f : 29f)) * uiScale;
+        GameObject barraSuperior = CreateRect("Barra_Superior", tabletCanvas.transform,
+            new Vector2(designWidth * uiScale, headerHeight), new Vector2(0f, headerY));
+        CreateImage(barraSuperior.transform, "Bg_Header", new Vector2(designWidth * uiScale, headerHeight),
+            Vector2.zero, new Color(0.09f, 0.1f, 0.14f, 1f)).raycastTarget = false;
 
-        textoRelojHeader = CreateText(barraSuperior.transform, "Reloj_Turno", "12:00 AM", new Vector2(-160f, 0f), new Vector2(300f, 60f), 34, TextAnchor.MiddleLeft, colorRosaNormal);
+        float relojX = portrait ? -160f : -180f;
+        float pausaX = portrait ? 190f : 300f;
+        Vector2 relojSize = portrait ? new Vector2(300f, 60f) : new Vector2(360f, 48f);
+        Vector2 pausaSize = portrait ? new Vector2(240f, 56f) : new Vector2(220f, 44f);
+        int headerFontSize = Mathf.RoundToInt((portrait ? 34f : 24f) * uiScale);
+        textoRelojHeader = CreateText(barraSuperior.transform, "Reloj_Turno", "12:00 AM",
+            new Vector2(relojX * uiScale, 0f), relojSize * uiScale, headerFontSize,
+            TextAnchor.MiddleLeft, colorRosaNormal);
 
-        Button btnPausaTop = CreateButton(barraSuperior.transform, "Btn_Pausa_Header", "PAUSA [A]", new Vector2(190f, 0f), new Vector2(240f, 56f),
-            new Color(0.55f, 0.14f, 0.16f, 1f), Color.white, 26, AlternarPausaEnTablet);
+        Button btnPausaTop = CreateButton(barraSuperior.transform, "Btn_Pausa_Header", "PAUSA [A]",
+            new Vector2(pausaX * uiScale, 0f), pausaSize * uiScale,
+            new Color(0.55f, 0.14f, 0.16f, 1f), Color.white,
+            Mathf.RoundToInt((portrait ? 26f : 18f) * uiScale), AlternarPausaEnTablet);
         textoBotonPausaHeader = btnPausaTop.GetComponentInChildren<Text>();
 
         // 2. PANEL DE REPORTE DE ANOMALÍAS
-        panelAnomalias = CreateRect("App_Reporte_Anomalias", tabletCanvas.transform, new Vector2(680f, 940f), new Vector2(0f, -40f));
+        panelAnomalias = CreateRect("App_Reporte_Anomalias", tabletCanvas.transform, canvasSize, Vector2.zero);
 
-        CreateText(panelAnomalias.transform, "Lbl_Cuartos", "1. SELECCIONA HABITACIÓN:", new Vector2(0f, 435f), new Vector2(640f, 36f), 24, TextAnchor.MiddleCenter, Color.white);
+        float roomLabelY = portrait ? 435f : 210f;
+        float roomColumnSpacing = portrait ? 215f : 300f;
+        float roomButtonWidth = portrait ? 200f : 270f;
+        float roomButtonHeight = portrait ? 70f : 46f;
+        float roomRowSpacing = portrait ? 82f : 54f;
+        float roomFirstRowY = portrait ? 365f : 160f;
+        int roomFontSize = Mathf.RoundToInt((portrait ? 24f : 20f) * uiScale);
+        CreateText(panelAnomalias.transform, "Lbl_Cuartos", "1. SELECCIONA HABITACIÓN:",
+            new Vector2(0f, roomLabelY * uiScale), new Vector2((portrait ? 640f : 860f) * uiScale, 36f * uiScale),
+            Mathf.RoundToInt((portrait ? 24f : 21f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
         string[,] cuartos = new string[,] {
             { "Kitchen", "COCINA" },
@@ -238,20 +263,30 @@ public class TabletSistemaVR : MonoBehaviour
         {
             int fila = i / 3;
             int col = i % 3;
-            float posX = (col - 1) * 215f;
-            float posY = 365f - (fila * 82f);
+            float posX = (col - 1) * roomColumnSpacing;
+            float posY = roomFirstRowY - (fila * roomRowSpacing);
 
             string idCuarto = cuartos[i, 0];
             string nombreMostrar = cuartos[i, 1];
 
             Button bCuarto = CreateButton(panelAnomalias.transform, "Room_" + idCuarto, nombreMostrar,
-                new Vector2(posX, posY), new Vector2(200f, 70f), colorBotonOscuro, colorRosaNormal, 24,
+                new Vector2(posX * uiScale, posY * uiScale),
+                new Vector2(roomButtonWidth, roomButtonHeight) * uiScale,
+                colorBotonOscuro, colorRosaNormal, roomFontSize,
                 () => SeleccionarCuartoUI(idCuarto));
 
             botonesCuartos[idCuarto] = bCuarto.GetComponent<Image>();
         }
 
-        CreateText(panelAnomalias.transform, "Lbl_Tipos", "2. TIPO DE ANOMALÍA:", new Vector2(0f, 210f), new Vector2(640f, 36f), 24, TextAnchor.MiddleCenter, Color.white);
+        float typeLabelY = portrait ? 210f : 42f;
+        float typeColumnX = portrait ? 160f : 215f;
+        float typeFirstRowY = portrait ? 145f : -1f;
+        float typeRowSpacing = portrait ? 74f : 42f;
+        Vector2 typeButtonSize = (portrait ? new Vector2(305f, 64f) : new Vector2(415f, 38f)) * uiScale;
+        int typeFontSize = Mathf.RoundToInt((portrait ? 26f : 20f) * uiScale);
+        CreateText(panelAnomalias.transform, "Lbl_Tipos", "2. TIPO DE ANOMALÍA:",
+            new Vector2(0f, typeLabelY * uiScale), new Vector2((portrait ? 640f : 860f) * uiScale, 36f * uiScale),
+            Mathf.RoundToInt((portrait ? 24f : 21f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
         string[] nombresTipos = new string[] {
             "Imagery", "Displacement", "Mimic", "Flawed", "Pure Form",
@@ -263,49 +298,80 @@ public class TabletSistemaVR : MonoBehaviour
             int indiceCopia = i;
             int col = i / 5;
             int fila = i % 5;
-            float posX = (col == 0) ? -160f : 160f;
-            float posY = 145f - (fila * 74f);
+            float posX = (col == 0) ? -typeColumnX : typeColumnX;
+            float posY = typeFirstRowY - (fila * typeRowSpacing);
 
             Button bTipo = CreateButton(panelAnomalias.transform, "Type_" + nombresTipos[i], nombresTipos[i].ToUpper(),
-                new Vector2(posX, posY), new Vector2(305f, 64f), colorBotonOscuro, colorRosaNormal, 26,
+                new Vector2(posX * uiScale, posY * uiScale), typeButtonSize,
+                colorBotonOscuro, colorRosaNormal, typeFontSize,
                 () => SeleccionarTipoUI(indiceCopia));
 
             botonesTipos[indiceCopia] = bTipo.GetComponent<Image>();
         }
 
+        float statusY = portrait ? -245f : -218f;
+        float reportY = portrait ? -335f : -269f;
+        Vector2 statusSize = (portrait ? new Vector2(640f, 45f) : new Vector2(850f, 32f)) * uiScale;
+        Vector2 reportSize = (portrait ? new Vector2(620f, 95f) : new Vector2(700f, 46f)) * uiScale;
         textoEstadoReporte = CreateText(panelAnomalias.transform, "Txt_Estado_Reporte", "Sistema listo para reportar.",
-            new Vector2(0f, -245f), new Vector2(640f, 45f), 25, TextAnchor.MiddleCenter, Color.white);
+            new Vector2(0f, statusY * uiScale), statusSize,
+            Mathf.RoundToInt((portrait ? 25f : 17f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
         CreateButton(panelAnomalias.transform, "Btn_Enviar_Reporte", "[ REPORTAR ANOMALÍA ]",
-            new Vector2(0f, -335f), new Vector2(620f, 95f), new Color(0.15f, 0.42f, 0.2f, 1f), Color.white, 34,
+            new Vector2(0f, reportY * uiScale), reportSize,
+            new Color(0.15f, 0.42f, 0.2f, 1f), Color.white,
+            Mathf.RoundToInt((portrait ? 34f : 22f) * uiScale),
             EnviarReporteAlGestor);
 
         // 3. PANEL DE PAUSA INTEGRADO
-        panelPausaPrincipal = CreateRect("App_Menu_Pausa", tabletCanvas.transform, new Vector2(680f, 940f), new Vector2(0f, -40f));
-        CreateImage(panelPausaPrincipal.transform, "Bg_Pausa", new Vector2(640f, 880f), Vector2.zero, new Color(0.02f, 0.02f, 0.03f, 0.98f)).raycastTarget = false;
-        CreateText(panelPausaPrincipal.transform, "Titulo_Pausa", "JUEGO EN PAUSA", new Vector2(0f, 320f), new Vector2(600f, 70f), 42, TextAnchor.MiddleCenter, Color.white);
+        panelPausaPrincipal = CreateRect("App_Menu_Pausa", tabletCanvas.transform, canvasSize, Vector2.zero);
+        CreateImage(panelPausaPrincipal.transform, "Bg_Pausa",
+            new Vector2((designWidth - 40f) * uiScale, (designHeight - 40f) * uiScale),
+            Vector2.zero, new Color(0.02f, 0.02f, 0.03f, 0.98f)).raycastTarget = false;
 
-        CreateButton(panelPausaPrincipal.transform, "Btn_Continuar", "CONTINUAR TURNO", new Vector2(0f, 160f), new Vector2(520f, 90f),
-            new Color(0.48f, 0.12f, 0.15f, 1f), Color.white, 30, ReanudarJuego);
+        float pauseTitleY = portrait ? 320f : 205f;
+        CreateText(panelPausaPrincipal.transform, "Titulo_Pausa", "JUEGO EN PAUSA",
+            new Vector2(0f, pauseTitleY * uiScale), new Vector2((designWidth - 80f) * uiScale, 60f * uiScale),
+            Mathf.RoundToInt((portrait ? 42f : 28f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
-        CreateButton(panelPausaPrincipal.transform, "Btn_Opciones", "OPCIONES DE AUDIO", new Vector2(0f, 30f), new Vector2(520f, 90f),
-            colorBotonOscuro, Color.white, 30, AbrirPanelOpciones);
+        float[] pauseButtonY = portrait
+            ? new[] { 160f, 30f, -100f, -230f }
+            : new[] { 110f, 30f, -50f, -130f };
+        Vector2 pauseButtonSize = (portrait ? new Vector2(520f, 90f) : new Vector2(600f, 62f)) * uiScale;
+        int pauseFontSize = Mathf.RoundToInt((portrait ? 30f : 21f) * uiScale);
+        CreateButton(panelPausaPrincipal.transform, "Btn_Continuar", "CONTINUAR TURNO",
+            new Vector2(0f, pauseButtonY[0] * uiScale), pauseButtonSize,
+            new Color(0.48f, 0.12f, 0.15f, 1f), Color.white, pauseFontSize, ReanudarJuego);
 
-        CreateButton(panelPausaPrincipal.transform, "Btn_MenuPrincipal", "VOLVER AL INICIO", new Vector2(0f, -100f), new Vector2(520f, 90f),
-            colorBotonOscuro, Color.white, 30, VolverAlMenuPrincipal);
+        CreateButton(panelPausaPrincipal.transform, "Btn_Opciones", "OPCIONES DE AUDIO",
+            new Vector2(0f, pauseButtonY[1] * uiScale), pauseButtonSize,
+            colorBotonOscuro, Color.white, pauseFontSize, AbrirPanelOpciones);
 
-        CreateButton(panelPausaPrincipal.transform, "Btn_Salir", "SALIR DEL JUEGO", new Vector2(0f, -230f), new Vector2(520f, 90f),
-            colorBotonOscuro, Color.white, 30, SalirDelJuego);
+        CreateButton(panelPausaPrincipal.transform, "Btn_MenuPrincipal", "VOLVER AL INICIO",
+            new Vector2(0f, pauseButtonY[2] * uiScale), pauseButtonSize,
+            colorBotonOscuro, Color.white, pauseFontSize, VolverAlMenuPrincipal);
+
+        CreateButton(panelPausaPrincipal.transform, "Btn_Salir", "SALIR DEL JUEGO",
+            new Vector2(0f, pauseButtonY[3] * uiScale), pauseButtonSize,
+            colorBotonOscuro, Color.white, pauseFontSize, SalirDelJuego);
 
         // 4. PANEL DE OPCIONES DE VOLUMEN
-        panelOpcionesVolumen = CreateRect("App_Opciones_Volumen", tabletCanvas.transform, new Vector2(680f, 940f), new Vector2(0f, -40f));
-        CreateImage(panelOpcionesVolumen.transform, "Bg_Opciones", new Vector2(640f, 880f), Vector2.zero, new Color(0.02f, 0.02f, 0.03f, 0.98f)).raycastTarget = false;
-        CreateText(panelOpcionesVolumen.transform, "Titulo_Opciones", "AJUSTE DE VOLUMEN", new Vector2(0f, 250f), new Vector2(600f, 70f), 38, TextAnchor.MiddleCenter, Color.white);
+        panelOpcionesVolumen = CreateRect("App_Opciones_Volumen", tabletCanvas.transform, canvasSize, Vector2.zero);
+        CreateImage(panelOpcionesVolumen.transform, "Bg_Opciones",
+            new Vector2((designWidth - 40f) * uiScale, (designHeight - 40f) * uiScale),
+            Vector2.zero, new Color(0.02f, 0.02f, 0.03f, 0.98f)).raycastTarget = false;
+        CreateText(panelOpcionesVolumen.transform, "Titulo_Opciones", "AJUSTE DE VOLUMEN",
+            new Vector2(0f, (portrait ? 250f : 200f) * uiScale),
+            new Vector2((designWidth - 80f) * uiScale, 60f * uiScale),
+            Mathf.RoundToInt((portrait ? 38f : 28f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
-        CrearSliderVolumen(panelOpcionesVolumen.transform);
+        CrearSliderVolumen(panelOpcionesVolumen.transform, uiScale);
 
-        CreateButton(panelOpcionesVolumen.transform, "Btn_VolverPausa", "VOLVER A PAUSA", new Vector2(0f, -160f), new Vector2(460f, 90f),
-            new Color(0.48f, 0.12f, 0.15f, 1f), Color.white, 30, MostrarMenuPausaPrincipal);
+        CreateButton(panelOpcionesVolumen.transform, "Btn_VolverPausa", "VOLVER A PAUSA",
+            new Vector2(0f, (portrait ? -160f : -170f) * uiScale),
+            (portrait ? new Vector2(460f, 90f) : new Vector2(500f, 62f)) * uiScale,
+            new Color(0.48f, 0.12f, 0.15f, 1f), Color.white,
+            Mathf.RoundToInt((portrait ? 30f : 21f) * uiScale), MostrarMenuPausaPrincipal);
 
         panelPausaPrincipal.SetActive(false);
         panelOpcionesVolumen.SetActive(false);
@@ -399,9 +465,10 @@ public class TabletSistemaVR : MonoBehaviour
         Application.Quit();
     }
 
-    private void CrearSliderVolumen(Transform parent)
+    private void CrearSliderVolumen(Transform parent, float uiScale)
     {
-        Image track = CreateImage(parent, "Barra_Volumen", new Vector2(500f, 45f), new Vector2(0f, 60f), new Color(0.18f, 0.19f, 0.22f, 1f));
+        Image track = CreateImage(parent, "Barra_Volumen", new Vector2(500f, 45f) * uiScale,
+            new Vector2(0f, 60f * uiScale), new Color(0.18f, 0.19f, 0.22f, 1f));
         RectTransform fillRect = CreateRect("Relleno_Volumen", track.transform, Vector2.zero, Vector2.zero).GetComponent<RectTransform>();
         fillRect.anchorMin = Vector2.zero;
         fillRect.anchorMax = new Vector2(0f, 1f);

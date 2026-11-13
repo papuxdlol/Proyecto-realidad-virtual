@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Keyboard = UnityEngine.InputSystem.Keyboard;
+using Mouse = UnityEngine.InputSystem.Mouse;
 using UnityEngine.XR;
 
 public class InteractorUniversalVR : MonoBehaviour
@@ -9,40 +11,52 @@ public class InteractorUniversalVR : MonoBehaviour
 
     private InputDevice controlDerecho;
     private InputDevice controlIzquierdo;
-    private bool gatilloPresionadoAntes = false;
+    private bool gatilloDerechoPresionadoAntes;
+    private bool gatilloIzquierdoPresionadoAntes;
+    private bool gripDerechoPresionadoAntes;
+    private bool gripIzquierdoPresionadoAntes;
 
     void Update()
     {
         bool clicDetectado = false;
+        Mouse mouse = Mouse.current;
+        Keyboard teclado = Keyboard.current;
 
-        // 1. Detectar Clic Izquierdo del Mouse o Tecla E / G (Para el Simulador en PC)
-        if (Input.GetMouseButtonDown(0) || Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.G))
+        if ((mouse != null && mouse.leftButton.wasPressedThisFrame) ||
+            (teclado != null && (teclado.eKey.wasPressedThisFrame || teclado.gKey.wasPressedThisFrame)))
         {
             clicDetectado = true;
         }
 
-        // 2. Detectar Gatillo (Trigger) o Grip de los controles reales de Meta Quest 2
+        // Detectar por separado las pulsaciones de gatillo y grip de cada control.
         if (!controlDerecho.isValid) controlDerecho = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
         if (!controlIzquierdo.isValid) controlIzquierdo = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
 
-        bool botonVR = false;
+        bool gatilloDerecho = false;
+        bool gatilloIzquierdo = false;
+        bool gripDerecho = false;
+        bool gripIzquierdo = false;
         if (controlDerecho.isValid)
         {
-            controlDerecho.TryGetFeatureValue(CommonUsages.triggerButton, out bool trigR);
-            controlDerecho.TryGetFeatureValue(CommonUsages.gripButton, out bool gripR);
-            botonVR |= (trigR || gripR);
+            controlDerecho.TryGetFeatureValue(CommonUsages.triggerButton, out gatilloDerecho);
+            controlDerecho.TryGetFeatureValue(CommonUsages.gripButton, out gripDerecho);
         }
         if (controlIzquierdo.isValid)
         {
-            controlIzquierdo.TryGetFeatureValue(CommonUsages.triggerButton, out bool trigL);
-            controlIzquierdo.TryGetFeatureValue(CommonUsages.gripButton, out bool gripL);
-            botonVR |= (trigL || gripL);
+            controlIzquierdo.TryGetFeatureValue(CommonUsages.triggerButton, out gatilloIzquierdo);
+            controlIzquierdo.TryGetFeatureValue(CommonUsages.gripButton, out gripIzquierdo);
         }
 
-        if (botonVR && !gatilloPresionadoAntes)
+        if ((gatilloDerecho && !gatilloDerechoPresionadoAntes) ||
+            (gatilloIzquierdo && !gatilloIzquierdoPresionadoAntes) ||
+            (gripDerecho && !gripDerechoPresionadoAntes) ||
+            (gripIzquierdo && !gripIzquierdoPresionadoAntes))
             clicDetectado = true;
 
-        gatilloPresionadoAntes = botonVR;
+        gatilloDerechoPresionadoAntes = gatilloDerecho;
+        gatilloIzquierdoPresionadoAntes = gatilloIzquierdo;
+        gripDerechoPresionadoAntes = gripDerecho;
+        gripIzquierdoPresionadoAntes = gripIzquierdo;
 
         if (clicDetectado)
         {
@@ -54,6 +68,7 @@ public class InteractorUniversalVR : MonoBehaviour
     {
         // Lanzamos rayos desde el control derecho, izquierdo y desde la mirada/mouse
         List<Ray> rayos = new List<Ray>();
+        Mouse mouse = Mouse.current;
 
         GameObject manoDer = GameObject.Find("Right Controller");
         if (manoDer != null) rayos.Add(new Ray(manoDer.transform.position, manoDer.transform.forward));
@@ -63,7 +78,8 @@ public class InteractorUniversalVR : MonoBehaviour
 
         if (Camera.main != null)
         {
-            rayos.Add(Camera.main.ScreenPointToRay(Input.mousePosition));
+            if (mouse != null)
+                rayos.Add(Camera.main.ScreenPointToRay(mouse.position.ReadValue()));
             rayos.Add(new Ray(Camera.main.transform.position, Camera.main.transform.forward));
         }
 
