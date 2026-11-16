@@ -1,118 +1,358 @@
 using System.Collections.Generic;
 using UnityEngine;
-using Keyboard = UnityEngine.InputSystem.Keyboard;
-using Mouse = UnityEngine.InputSystem.Mouse;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.XR;
 using UnityEngine.XR;
+using UnityEngine.XR.Interaction.Toolkit.Interactors;
+using CommonUsages = UnityEngine.XR.CommonUsages;
+using InputDevice = UnityEngine.XR.InputDevice;
 
+[DefaultExecutionOrder(-90)]
 public class InteractorUniversalVR : MonoBehaviour
 {
-    [Header("Distancia máxima para tocar Switches, Puertas y Fusibles")]
-    public float distanciaInteraccion = 4.5f;
+    public static InteractorUniversalVR Instancia;
 
-    private InputDevice controlDerecho;
-    private InputDevice controlIzquierdo;
-    private bool gatilloDerechoPresionadoAntes;
-    private bool gatilloIzquierdoPresionadoAntes;
-    private bool gripDerechoPresionadoAntes;
-    private bool gripIzquierdoPresionadoAntes;
+    [Header("Distancia para activar Switches, Puertas y Fusibles")]
+    public float distanciaMaxima = 3.2f;
 
-    void Update()
+    private MonoBehaviour objetivoActual;
+    private string nombreObjetivo = "";
+    private bool botonVRAnterior = false;
+    private float ultimoTiempoAccion = -10f;
+
+    private InterruptorLuz[] cacheSwitches;
+    private CajaFusiblesVR[] cacheFusibles;
+    private PuertaAutoCierre[] cachePuertas;
+    private XRRayInteractor[] cacheRayosXR;
+
+    void Awake()
     {
-        bool clicDetectado = false;
-        Mouse mouse = Mouse.current;
-        Keyboard teclado = Keyboard.current;
-
-        if ((mouse != null && mouse.leftButton.wasPressedThisFrame) ||
-            (teclado != null && (teclado.eKey.wasPressedThisFrame || teclado.gKey.wasPressedThisFrame)))
+        // Si este componente fue agregado por error a la Tablet, o ya existe otra instancia activa, destruir el duplicado
+        if (GetComponent<TabletSistemaVR>() != null || name.ToLower().Contains("tablet"))
         {
-            clicDetectado = true;
+            Destroy(this);
+            return;
         }
 
-        // Detectar por separado las pulsaciones de gatillo y grip de cada control.
-        if (!controlDerecho.isValid) controlDerecho = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
-        if (!controlIzquierdo.isValid) controlIzquierdo = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
-
-        bool gatilloDerecho = false;
-        bool gatilloIzquierdo = false;
-        bool gripDerecho = false;
-        bool gripIzquierdo = false;
-        if (controlDerecho.isValid)
+        if (Instancia != null && Instancia != this)
         {
-            controlDerecho.TryGetFeatureValue(CommonUsages.triggerButton, out gatilloDerecho);
-            controlDerecho.TryGetFeatureValue(CommonUsages.gripButton, out gripDerecho);
-        }
-        if (controlIzquierdo.isValid)
-        {
-            controlIzquierdo.TryGetFeatureValue(CommonUsages.triggerButton, out gatilloIzquierdo);
-            controlIzquierdo.TryGetFeatureValue(CommonUsages.gripButton, out gripIzquierdo);
+            Destroy(this);
+            return;
         }
 
-        if ((gatilloDerecho && !gatilloDerechoPresionadoAntes) ||
-            (gatilloIzquierdo && !gatilloIzquierdoPresionadoAntes) ||
-            (gripDerecho && !gripDerechoPresionadoAntes) ||
-            (gripIzquierdo && !gripIzquierdoPresionadoAntes))
-            clicDetectado = true;
+        Instancia = this;
+        InterruptorLuz.HabilitarLucesAdicionalesEnURP();
+        AsegurarPuertasYSwitchesEnEscena();
+    }
 
-        gatilloDerechoPresionadoAntes = gatilloDerecho;
-        gatilloIzquierdoPresionadoAntes = gatilloIzquierdo;
-        gripDerechoPresionadoAntes = gripDerecho;
-        gripIzquierdoPresionadoAntes = gripIzquierdo;
+    void Start()
+    {
+        RefrescarCacheInteractivos();
+    }
 
-        if (clicDetectado)
+    public static void AsegurarPuertasYSwitchesEnEscena()
+    {
+        GameObject house = GameObject.Find("House");
+        if (house != null)
         {
-            IntentarInteractuar();
+            foreach (Transform t in house.GetComponentsInChildren<Transform>(true))
+            {
+                if (t == null) continue;
+                string n = t.name.ToLower();
+
+                bool esPuerta = (n.StartsWith("door") || n.StartsWith("closet_door")) && !n.Contains("frame") && !n.Contains("clonmimic");
+                if (!esPuerta) continue;
+
+                // NUNCA agregar PuertaAutoCierre a las mallas invisibles de House_Colliders
+                if (PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(t))
+                {
+                    PuertaAutoCierre puertaInvalida = t.GetComponent<PuertaAutoCierre>();
+                    if (puertaInvalida != null)
+                        Destroy(puertaInvalida);
+                    Collider colInvalido = t.GetComponent<Collider>();
+                    if (colInvalido != null)
+                        colInvalido.enabled = false;
+                    continue;
+                }
+
+                PuertaAutoCierre puerta = t.GetComponent<PuertaAutoCierre>();
+                if (puerta == null)
+                    puerta = t.gameObject.AddComponent<PuertaAutoCierre>();
+
+                ObjetoAnomalia anom = t.GetComponent<ObjetoAnomalia>();
+                if (anom != null && anom.posiblesVariantes != null)
+                {
+                    foreach (var v in anom.posiblesVariantes)
+                    {
+                        if (v != null && v.tipo == TipoAnomalia.Unknown && v.puertaQueSeAbreSola == null && v.objetoExtraActivable == null)
+                            v.puertaQueSeAbreSola = puerta;
+                    }
+                }
+            }
         }
     }
 
-    private void IntentarInteractuar()
+    public void RefrescarCacheInteractivos()
     {
-        // Lanzamos rayos desde el control derecho, izquierdo y desde la mirada/mouse
-        List<Ray> rayos = new List<Ray>();
-        Mouse mouse = Mouse.current;
+        cacheSwitches = FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        cacheFusibles = FindObjectsByType<CajaFusiblesVR>(FindObjectsInactive.Include, FindObjectsSortMode.None);
 
-        GameObject manoDer = GameObject.Find("Right Controller");
-        if (manoDer != null) rayos.Add(new Ray(manoDer.transform.position, manoDer.transform.forward));
-
-        GameObject manoIzq = GameObject.Find("Left Controller");
-        if (manoIzq != null) rayos.Add(new Ray(manoIzq.transform.position, manoIzq.transform.forward));
-
-        if (Camera.main != null)
+        PuertaAutoCierre[] todasPuertas = FindObjectsByType<PuertaAutoCierre>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        List<PuertaAutoCierre> puertasVisibles = new List<PuertaAutoCierre>();
+        foreach (var pt in todasPuertas)
         {
-            if (mouse != null)
-                rayos.Add(Camera.main.ScreenPointToRay(mouse.position.ReadValue()));
-            rayos.Add(new Ray(Camera.main.transform.position, Camera.main.transform.forward));
+            if (pt != null && !PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(pt.transform))
+                puertasVisibles.Add(pt);
+        }
+        cachePuertas = puertasVisibles.ToArray();
+
+        cacheRayosXR = FindObjectsByType<XRRayInteractor>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+    }
+
+    void Update()
+    {
+        if (Time.timeScale == 0f)
+        {
+            objetivoActual = null;
+            return;
         }
 
-        foreach (Ray r in rayos)
+        // Si el jugador está apuntando a la interfaz UI de la Tablet, no interceptar el gatillo
+        if (EstaApuntandoAInterfazUI())
         {
-            // RaycastAll atraviesa paredes invisibles de House_Colliders para encontrar el Switch, Puerta o Fusibles
-            RaycastHit[] impactos = Physics.RaycastAll(r, distanciaInteraccion);
-            foreach (RaycastHit hit in impactos)
+            objetivoActual = null;
+            nombreObjetivo = "";
+            botonVRAnterior = LeerPulsacionControlesVR();
+            return;
+        }
+
+        BuscarObjetoFrenteAlJugador();
+
+        if (objetivoActual != null && DetectarPulsacion())
+        {
+            if (Time.unscaledTime - ultimoTiempoAccion >= 0.22f)
             {
-                // A) ¿Tocó un Switch de luz?
-                InterruptorLuz sw = hit.collider.GetComponentInParent<InterruptorLuz>();
-                if (sw != null)
-                {
-                    sw.AlternarDesdeRayo();
-                    return;
-                }
+                ultimoTiempoAccion = Time.unscaledTime;
+                EjecutarAccion(objetivoActual);
+            }
+        }
+    }
 
-                // B) ¿Tocó una Puerta?
-                PuertaAutoCierre puerta = hit.collider.GetComponentInParent<PuertaAutoCierre>();
-                if (puerta != null)
-                {
-                    puerta.AlternarPuerta();
-                    return;
-                }
+    private bool EstaApuntandoAInterfazUI()
+    {
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+            return true;
 
-                // C) ¿Tocó la Caja de Fusibles?
-                CajaFusiblesVR fusibles = hit.collider.GetComponentInParent<CajaFusiblesVR>();
-                if (fusibles != null)
+        if (cacheRayosXR != null)
+        {
+            foreach (var ray in cacheRayosXR)
+            {
+                if (ray != null && ray.isActiveAndEnabled && ray.TryGetCurrentUIRaycastResult(out RaycastResult res) && res.isValid)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private void BuscarObjetoFrenteAlJugador()
+    {
+        objetivoActual = null;
+        nombreObjetivo = "";
+
+        if (cacheSwitches == null || cachePuertas == null || cachePuertas.Length == 0)
+            RefrescarCacheInteractivos();
+
+        Transform cam = Camera.main != null ? Camera.main.transform : transform;
+        float mejorPuntaje = float.MaxValue;
+
+        // 1. Revisar todos los Switches
+        if (cacheSwitches != null)
+        {
+            foreach (var sw in cacheSwitches)
+            {
+                if (sw == null || !sw.isActiveAndEnabled) continue;
+                EvaluarCandidato(sw, sw.ObtenerPosicionMundial(), cam, ref mejorPuntaje, "Switch de Luz");
+            }
+        }
+
+        // 2. Revisar la Caja de Fusibles
+        if (cacheFusibles != null)
+        {
+            foreach (var cf in cacheFusibles)
+            {
+                if (cf == null || !cf.isActiveAndEnabled) continue;
+                EvaluarCandidato(cf, ObtenerCentroReal(cf.transform), cam, ref mejorPuntaje, "Caja de Fusibles");
+            }
+        }
+
+        // 3. Revisar todas las Puertas visibles
+        if (cachePuertas != null)
+        {
+            foreach (var pt in cachePuertas)
+            {
+                if (pt == null || !pt.isActiveAndEnabled) continue;
+                if (PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(pt.transform)) continue;
+
+                // Usar el punto más cercano de la puerta a la línea de visión de la cámara además del centro
+                Vector3 puntoFrenteCam = cam.position + cam.forward * 1.1f;
+                Vector3 posCercana = pt.ObtenerPuntoMasCercano(puntoFrenteCam);
+                EvaluarCandidato(pt, posCercana, cam, ref mejorPuntaje, "Puerta");
+                EvaluarCandidato(pt, pt.ObtenerPosicionMundial(), cam, ref mejorPuntaje, "Puerta");
+            }
+        }
+    }
+
+    private void EvaluarCandidato(MonoBehaviour script, Vector3 posObjeto, Transform cam, ref float mejorPuntaje, string etiqueta)
+    {
+        float distCam = Vector3.Distance(cam.position, posObjeto);
+        if (distCam > distanciaMaxima) return;
+
+        // Evitar seleccionar objetos en un piso distinto (diferencia de altura > 1.85m)
+        if (Mathf.Abs(cam.position.y - posObjeto.y) > 1.85f) return;
+
+        // A) Verificar si alguno de los rayos de los mandos VR apunta hacia el objeto (Ideal para Meta Quest 2)
+        if (cacheRayosXR != null)
+        {
+            foreach (var ray in cacheRayosXR)
+            {
+                if (ray == null || !ray.isActiveAndEnabled) continue;
+                Transform rayOrigin = ray.rayOriginTransform != null ? ray.rayOriginTransform : ray.transform;
+                float distMano = Vector3.Distance(rayOrigin.position, posObjeto);
+                if (distMano > distanciaMaxima) continue;
+
+                Vector3 dirDesdeMano = (posObjeto - rayOrigin.position).normalized;
+                float anguloRayo = Vector3.Angle(rayOrigin.forward, dirDesdeMano);
+                if (anguloRayo < 26f)
                 {
-                    fusibles.RepararFusibles(null);
-                    return;
+                    float puntajeRayo = distMano * 0.65f + (anguloRayo * 0.04f);
+                    if (puntajeRayo < mejorPuntaje)
+                    {
+                        mejorPuntaje = puntajeRayo;
+                        objetivoActual = script;
+                        nombreObjetivo = $"{etiqueta} ({script.name})";
+                    }
                 }
             }
+        }
+
+        // B) Verificar cono de visión de la cámara principal
+        Vector3 dirHaciaObjeto = (posObjeto - cam.position).normalized;
+        float anguloCam = Vector3.Angle(cam.forward, dirHaciaObjeto);
+        if (anguloCam < 42f)
+        {
+            float puntajeCam = distCam + (anguloCam * 0.045f);
+            if (puntajeCam < mejorPuntaje)
+            {
+                mejorPuntaje = puntajeCam;
+                objetivoActual = script;
+                nombreObjetivo = $"{etiqueta} ({script.name})";
+            }
+        }
+    }
+
+    private Vector3 ObtenerCentroReal(Transform t)
+    {
+        MeshRenderer mr = t.GetComponentInChildren<MeshRenderer>();
+        return mr != null ? mr.bounds.center : t.position;
+    }
+
+    private bool DetectarPulsacion()
+    {
+        // 1. Teclado y Mouse en PC
+        if (Keyboard.current != null)
+        {
+            if (Keyboard.current.eKey.wasPressedThisFrame ||
+                Keyboard.current.fKey.wasPressedThisFrame ||
+                Keyboard.current.gKey.wasPressedThisFrame)
+                return true;
+        }
+
+        if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+            return true;
+
+        // 2. Controles reales de Meta Quest 2 (New Input System + XR InputDevices)
+        bool vrPresionado = LeerPulsacionControlesVR();
+        if (vrPresionado && !botonVRAnterior)
+        {
+            botonVRAnterior = true;
+            return true;
+        }
+        botonVRAnterior = vrPresionado;
+
+        return false;
+    }
+
+    private bool LeerPulsacionControlesVR()
+    {
+        if (LeerControlesXR(XRNode.RightHand) || LeerControlesXR(XRNode.LeftHand))
+            return true;
+
+        // Respaldo con New Input System XRController para OpenXR en Meta Quest 2
+        if (LeerNewInputXR(XRController.rightHand) || LeerNewInputXR(XRController.leftHand))
+            return true;
+
+        return false;
+    }
+
+    private bool LeerControlesXR(XRNode mano)
+    {
+        InputDevice dev = InputDevices.GetDeviceAtXRNode(mano);
+        if (!dev.isValid) return false;
+
+        dev.TryGetFeatureValue(CommonUsages.triggerButton, out bool trigger);
+        dev.TryGetFeatureValue(CommonUsages.gripButton, out bool grip);
+        return trigger || grip;
+    }
+
+    private bool LeerNewInputXR(XRController ctrl)
+    {
+        if (ctrl == null) return false;
+        foreach (var control in ctrl.allControls)
+        {
+            if (control is UnityEngine.InputSystem.Controls.ButtonControl btn)
+            {
+                string n = btn.name.ToLower();
+                if ((n.Contains("trigger") || n.Contains("grip") || n.Contains("select")) && btn.isPressed)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private void EjecutarAccion(MonoBehaviour objetivo)
+    {
+        if (objetivo is InterruptorLuz sw)
+        {
+            sw.AlternarDesdeRayo();
+            Debug.Log($"[ÉXITO] Switch accionado: {sw.name}");
+        }
+        else if (objetivo is PuertaAutoCierre pt)
+        {
+            pt.AlternarPuerta();
+            Debug.Log($"[ÉXITO] Puerta accionada: {pt.name}");
+        }
+        else if (objetivo is CajaFusiblesVR cf)
+        {
+            cf.RepararFusibles(null);
+            Debug.Log($"[ÉXITO] Caja de fusibles accionada: {cf.name}");
+        }
+    }
+
+    void OnGUI()
+    {
+        if (XRSettings.isDeviceActive) return;
+
+        if (objetivoActual != null)
+        {
+            GUIStyle estilo = new GUIStyle(GUI.skin.box);
+            estilo.fontSize = 20;
+            estilo.fontStyle = FontStyle.Bold;
+            estilo.normal.textColor = Color.green;
+            estilo.alignment = TextAnchor.MiddleCenter;
+
+            Rect caja = new Rect(Screen.width / 2f - 260f, Screen.height - 85f, 520f, 45f);
+            GUI.Box(caja, $"[ Clic / 'F' / Gatillo ] -> {nombreObjetivo}", estilo);
         }
     }
 }

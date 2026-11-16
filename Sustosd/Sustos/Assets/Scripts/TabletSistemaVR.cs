@@ -1,10 +1,13 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using UnityEngine.XR;
+using UnityEngine.XR.Interaction.Toolkit.Interactors;
 using UnityEngine.XR.Interaction.Toolkit.UI;
+using Keyboard = UnityEngine.InputSystem.Keyboard;
 
 public class TabletSistemaVR : MonoBehaviour
 {
@@ -18,14 +21,15 @@ public class TabletSistemaVR : MonoBehaviour
     private int horaActual = 0;
 
     [Header("2. Generador Automático de Anomalías")]
-    public float segundosEntreAnomalias = 20f;
-    private float temporizadorAnomalias = 0f;
+    public float segundosEntreAnomalias = 18f;
+    private float temporizadorAnomalias = 12f; // Primera anomalía a los 6 segundos de iniciar
     public List<ObjetoAnomalia> todasLasAnomalias = new List<ObjetoAnomalia>();
 
     [Header("3. Sonidos Opcionales de la Tablet")]
     public AudioSource audioFeedback;
     public AudioClip sonidoAcierto;
     public AudioClip sonidoFallo;
+    private AudioClip sonidoClickUI;
 
     private Canvas tabletCanvas;
     private GameObject panelAnomalias;
@@ -41,6 +45,8 @@ public class TabletSistemaVR : MonoBehaviour
 
     private string cuartoElegido = "Kitchen";
     private int tipoElegido = 0;
+    private int anomaliasCorregidas = 0;
+    private bool fusiblesReparadosReciente = false;
 
     private bool isPaused = false;
     private float previousTimeScale = 1f;
@@ -54,18 +60,76 @@ public class TabletSistemaVR : MonoBehaviour
     private void Awake()
     {
         Instancia = this;
+
+        // Si había un InteractorUniversalVR pegado por error a la Tablet, removerlo para que no robe los clics del gatillo
+        InteractorUniversalVR interactorEnTablet = GetComponent<InteractorUniversalVR>();
+        if (interactorEnTablet != null)
+            Destroy(interactorEnTablet);
+
+        // Si quedaba el menú antiguo AnomalyTabletMenu, removerlo
+        AnomalyTabletMenu menuAntiguo = GetComponentInChildren<AnomalyTabletMenu>(true);
+        if (menuAntiguo != null)
+            Destroy(menuAntiguo);
+
         EnsureUiEventSystem();
+        AsegurarAudioTablet();
+        AjustarColliderTabletParaNoBloquearUI();
     }
 
     private void Start()
     {
-        // Recolectar automáticamente todos los objetos con anomalías de la casa
-        todasLasAnomalias.Clear();
-        todasLasAnomalias.AddRange(FindObjectsByType<ObjetoAnomalia>(FindObjectsSortMode.None));
-
+        RefrescarListaAnomalias();
         ConstruirInterfazEnTablet();
+        ConfigurarRayosUIMandos();
         SeleccionarCuartoUI("Kitchen");
         SeleccionarTipoUI(0);
+    }
+
+    public void RefrescarListaAnomalias()
+    {
+        todasLasAnomalias.Clear();
+        todasLasAnomalias.AddRange(FindObjectsByType<ObjetoAnomalia>(FindObjectsInactive.Include, FindObjectsSortMode.None));
+    }
+
+    private void AsegurarAudioTablet()
+    {
+        if (audioFeedback == null)
+        {
+            audioFeedback = GetComponent<AudioSource>();
+            if (audioFeedback == null)
+                audioFeedback = gameObject.AddComponent<AudioSource>();
+        }
+
+        audioFeedback.playOnAwake = false;
+        audioFeedback.spatialBlend = 0.5f;
+
+        if (sonidoClickUI == null)
+            sonidoClickUI = CrearTonoProcedural("TabletClick", 880f, 880f, 0.035f, 0.35f);
+        if (sonidoAcierto == null)
+            sonidoAcierto = CrearTonoProcedural("TabletSuccess", 520f, 1040f, 0.22f, 0.55f);
+        if (sonidoFallo == null)
+            sonidoFallo = CrearTonoProcedural("TabletError", 260f, 140f, 0.28f, 0.55f);
+    }
+
+    private void AjustarColliderTabletParaNoBloquearUI()
+    {
+        // Desplazar ligeramente hacia abajo el BoxCollider 3D de la Tablet para que el rayo siempre toque primero el Canvas UI
+        BoxCollider bc = GetComponent<BoxCollider>();
+        if (bc != null)
+        {
+            bc.center = new Vector3(bc.center.x, -0.0025f, bc.center.z);
+        }
+    }
+
+    private void ConfigurarRayosUIMandos()
+    {
+        foreach (var ray in FindObjectsByType<XRRayInteractor>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (ray == null) continue;
+            ray.enableUIInteraction = true;
+            ray.blockUIOnInteractableSelection = false;
+            ray.allowHoveredActivate = true;
+        }
     }
 
     private void Update()
@@ -90,22 +154,24 @@ public class TabletSistemaVR : MonoBehaviour
             }
         }
 
-        // 3. Detectar Botón A del control derecho para Pausar/Reanudar
+        // 3. Detectar Botón A del control derecho (o tecla P en PC) para Pausar/Reanudar
         if (!rightController.isValid)
             rightController = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
 
+        bool botonAPresionado = false;
         if (rightController.isValid &&
-            rightController.TryGetFeatureValue(CommonUsages.primaryButton, out bool aButtonPressed))
+            rightController.TryGetFeatureValue(CommonUsages.primaryButton, out bool aBtn) && aBtn)
         {
-            if (aButtonPressed && !aButtonWasPressed)
-                AlternarPausaEnTablet();
+            botonAPresionado = true;
+        }
 
-            aButtonWasPressed = aButtonPressed;
-        }
-        else
-        {
-            aButtonWasPressed = false;
-        }
+        if (botonAPresionado && !aButtonWasPressed)
+            AlternarPausaEnTablet();
+
+        aButtonWasPressed = botonAPresionado;
+
+        if (Keyboard.current != null && Keyboard.current.pKey.wasPressedThisFrame)
+            AlternarPausaEnTablet();
     }
 
     private void OnDestroy()
@@ -118,38 +184,126 @@ public class TabletSistemaVR : MonoBehaviour
     // =========================================================================
     public void GenerarAnomaliaAleatoria()
     {
-        List<ObjetoAnomalia> inactivas = todasLasAnomalias.FindAll(a => a != null && !a.estaActiva);
+        if (todasLasAnomalias.Count == 0)
+            RefrescarListaAnomalias();
+
+        List<ObjetoAnomalia> inactivas = todasLasAnomalias.FindAll(a =>
+            a != null && !a.estaActiva && a.posiblesVariantes != null && a.posiblesVariantes.Count > 0);
+
         if (inactivas.Count > 0)
         {
-            int indice = Random.Range(0, inactivas.Count);
+            int indice = UnityEngine.Random.Range(0, inactivas.Count);
             inactivas[indice].ActivarAnomalia();
+            ActualizarRelojUI();
             Debug.Log($"[ANOMALÍA ACTIVADA] Cuarto: {inactivas[indice].nombreCuarto} | Tipo: {inactivas[indice].tipoActivoActual} | Objeto: {inactivas[indice].name}");
         }
+    }
+
+    public void NotificarFusiblesReparados()
+    {
+        fusiblesReparadosReciente = true;
+        anomaliasCorregidas++;
+        if (textoEstadoReporte != null)
+        {
+            textoEstadoReporte.text = "¡APAGÓN REPARADO EN GARAJE!";
+            textoEstadoReporte.color = colorVerdeSeleccionado;
+        }
+        ActualizarRelojUI();
     }
 
     private void EnviarReporteAlGestor()
     {
         TipoAnomalia tipoBuscado = (TipoAnomalia)tipoElegido;
 
+        if (todasLasAnomalias.Count == 0)
+            RefrescarListaAnomalias();
+
+        // Buscar coincidencia exacta de Cuarto + Tipo de Anomalía activa
         ObjetoAnomalia anomaliaEncontrada = todasLasAnomalias.Find(a =>
             a != null &&
             a.estaActiva &&
-            a.nombreCuarto == cuartoElegido &&
+            string.Equals(a.nombreCuarto?.Trim(), cuartoElegido, StringComparison.OrdinalIgnoreCase) &&
             a.tipoActivoActual == tipoBuscado);
+
+        // Si el jugador ya subió la palanca de fusibles manualmente y luego reporta Basement + Electrical
+        if (anomaliaEncontrada == null &&
+            fusiblesReparadosReciente &&
+            string.Equals(cuartoElegido, "Basement", StringComparison.OrdinalIgnoreCase) &&
+            tipoBuscado == TipoAnomalia.Electrical)
+        {
+            fusiblesReparadosReciente = false;
+            textoEstadoReporte.text = $"¡ANOMALÍA CORREGIDA! ({anomaliasCorregidas} resueltas)";
+            textoEstadoReporte.color = colorVerdeSeleccionado;
+            if (audioFeedback && sonidoAcierto) audioFeedback.PlayOneShot(sonidoAcierto);
+            EnviarHapticPulso(0.65f, 0.18f);
+            ActualizarRelojUI();
+            return;
+        }
 
         if (anomaliaEncontrada != null)
         {
-            anomaliaEncontrada.RestaurarNormalidad();
-            textoEstadoReporte.text = "¡ANOMALÍA CORREGIDA!";
+            try
+            {
+                anomaliaEncontrada.RestaurarNormalidad();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Tablet] Aviso al restaurar anomalía {anomaliaEncontrada.name}: {ex.Message}");
+            }
+
+            anomaliasCorregidas++;
+            textoEstadoReporte.text = $"¡ANOMALÍA CORREGIDA! ({cuartoElegido} - {tipoBuscado})";
             textoEstadoReporte.color = colorVerdeSeleccionado;
             if (audioFeedback && sonidoAcierto) audioFeedback.PlayOneShot(sonidoAcierto);
+            EnviarHapticPulso(0.65f, 0.18f);
+            ActualizarRelojUI();
+            Debug.Log($"[REPORTE EXITOSO] Se corrigió {anomaliaEncontrada.name} en {cuartoElegido} ({tipoBuscado}).");
         }
         else
         {
-            textoEstadoReporte.text = "ERROR: No se detectó esa anomalía.";
+            // Verificar si hay alguna anomalía activa en ese cuarto pero de otro tipo para dar mejor diagnóstico
+            ObjetoAnomalia otraEnMismoCuarto = todasLasAnomalias.Find(a =>
+                a != null &&
+                a.estaActiva &&
+                string.Equals(a.nombreCuarto?.Trim(), cuartoElegido, StringComparison.OrdinalIgnoreCase));
+
+            int totalActivas = ContarAnomaliasActivas();
+            if (totalActivas == 0)
+            {
+                textoEstadoReporte.text = "SIN ANOMALÍAS ACTIVAS EN ESTE MOMENTO.";
+            }
+            else if (otraEnMismoCuarto != null)
+            {
+                textoEstadoReporte.text = $"FALLO: En {cuartoElegido} no es de tipo {tipoBuscado}.";
+            }
+            else
+            {
+                textoEstadoReporte.text = $"ERROR: Sin anomalía {tipoBuscado} en {cuartoElegido}.";
+            }
+
             textoEstadoReporte.color = new Color(1f, 0.35f, 0.35f, 1f);
             if (audioFeedback && sonidoFallo) audioFeedback.PlayOneShot(sonidoFallo);
+            EnviarHapticPulso(0.3f, 0.1f);
         }
+    }
+
+    private int ContarAnomaliasActivas()
+    {
+        int c = 0;
+        for (int i = 0; i < todasLasAnomalias.Count; i++)
+        {
+            if (todasLasAnomalias[i] != null && todasLasAnomalias[i].estaActiva)
+                c++;
+        }
+        return c;
+    }
+
+    private void EnviarHapticPulso(float amplitud, float duracion)
+    {
+        if (!rightController.isValid)
+            rightController = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
+        if (rightController.isValid)
+            rightController.SendHapticImpulse(0u, amplitud, duracion);
     }
 
     private void ActualizarRelojUI()
@@ -163,7 +317,9 @@ public class TabletSistemaVR : MonoBehaviour
         }
         else
         {
-            textoRelojHeader.text = horaTexto;
+            int activas = ContarAnomaliasActivas();
+            textoRelojHeader.text = activas > 0 ? $"{horaTexto}  [ALERTA: {activas}]" : horaTexto;
+            textoRelojHeader.color = activas > 0 ? new Color(1f, 0.45f, 0.45f, 1f) : colorRosaNormal;
         }
     }
 
@@ -172,32 +328,41 @@ public class TabletSistemaVR : MonoBehaviour
     // =========================================================================
     private void ConstruirInterfazEnTablet()
     {
-        // Usa el Canvas que ya tienes en 'Pantalla de reportes' dentro de la Tablet
         tabletCanvas = GetComponentInChildren<Canvas>(true);
 
         if (tabletCanvas == null)
         {
-            GameObject canvasObj = new GameObject("Canvas_Pantalla_Tablet",
-                typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(TrackedDeviceGraphicRaycaster));
+            GameObject canvasObj = new GameObject("Pantalla de reportes",
+                typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster), typeof(TrackedDeviceGraphicRaycaster));
             canvasObj.transform.SetParent(transform, false);
             tabletCanvas = canvasObj.GetComponent<Canvas>();
 
-            canvasObj.transform.localPosition = new Vector3(0f, 0.015f, 0f);
-            canvasObj.transform.localRotation = Quaternion.Euler(90f, -90f, 0f);
-            canvasObj.transform.localScale = Vector3.one * 0.00008f;
+            canvasObj.transform.localPosition = new Vector3(0f, 0.003f, 0f);
+            canvasObj.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            canvasObj.transform.localScale = Vector3.one * 0.000076444565f;
         }
         else
         {
-            if (tabletCanvas.GetComponent<TrackedDeviceGraphicRaycaster>() == null)
-                tabletCanvas.gameObject.AddComponent<TrackedDeviceGraphicRaycaster>();
+            // Elevar el Canvas 3mm sobre la malla de la tablet para que el BoxCollider de agarre nunca bloquee los clics UI
+            Vector3 lp = tabletCanvas.transform.localPosition;
+            tabletCanvas.transform.localPosition = new Vector3(lp.x, Mathf.Max(lp.y, 0.003f), lp.z);
+            tabletCanvas.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
         }
 
-        tabletCanvas.transform.localRotation *= Quaternion.Euler(0f, 180f, 0f);
+        tabletCanvas.gameObject.layer = 5; // UI Layer
         tabletCanvas.renderMode = RenderMode.WorldSpace;
         tabletCanvas.worldCamera = Camera.main;
         tabletCanvas.sortingOrder = 100;
 
-        // La pantalla instalada ya tiene su escala y orientación ajustadas al modelo.
+        GraphicRaycaster gr = tabletCanvas.GetComponent<GraphicRaycaster>();
+        if (gr == null) gr = tabletCanvas.gameObject.AddComponent<GraphicRaycaster>();
+        gr.ignoreReversedGraphics = false;
+
+        TrackedDeviceGraphicRaycaster tdgr = tabletCanvas.GetComponent<TrackedDeviceGraphicRaycaster>();
+        if (tdgr == null) tdgr = tabletCanvas.gameObject.AddComponent<TrackedDeviceGraphicRaycaster>();
+        tdgr.ignoreReversedGraphics = false;
+        tdgr.checkFor3DOcclusion = false;
+
         RectTransform canvasRect = tabletCanvas.GetComponent<RectTransform>();
         if (canvasRect.sizeDelta.x <= 0f || canvasRect.sizeDelta.y <= 0f)
             canvasRect.sizeDelta = new Vector2(900f, 600f);
@@ -211,6 +376,9 @@ public class TabletSistemaVR : MonoBehaviour
         for (int i = tabletCanvas.transform.childCount - 1; i >= 0; i--)
             Destroy(tabletCanvas.transform.GetChild(i).gameObject);
 
+        botonesCuartos.Clear();
+        botonesTipos.Clear();
+
         CreateImage(tabletCanvas.transform, "Fondo_Pantalla", canvasSize, Vector2.zero, new Color(0.04f, 0.05f, 0.07f, 0.98f)).raycastTarget = false;
 
         // 1. BARRA SUPERIOR (Reloj + Botón de Pausa)
@@ -221,11 +389,11 @@ public class TabletSistemaVR : MonoBehaviour
         CreateImage(barraSuperior.transform, "Bg_Header", new Vector2(designWidth * uiScale, headerHeight),
             Vector2.zero, new Color(0.09f, 0.1f, 0.14f, 1f)).raycastTarget = false;
 
-        float relojX = portrait ? -160f : -180f;
+        float relojX = portrait ? -150f : -170f;
         float pausaX = portrait ? 190f : 300f;
-        Vector2 relojSize = portrait ? new Vector2(300f, 60f) : new Vector2(360f, 48f);
+        Vector2 relojSize = portrait ? new Vector2(340f, 60f) : new Vector2(420f, 48f);
         Vector2 pausaSize = portrait ? new Vector2(240f, 56f) : new Vector2(220f, 44f);
-        int headerFontSize = Mathf.RoundToInt((portrait ? 34f : 24f) * uiScale);
+        int headerFontSize = Mathf.RoundToInt((portrait ? 30f : 22f) * uiScale);
         textoRelojHeader = CreateText(barraSuperior.transform, "Reloj_Turno", "12:00 AM",
             new Vector2(relojX * uiScale, 0f), relojSize * uiScale, headerFontSize,
             TextAnchor.MiddleLeft, colorRosaNormal);
@@ -388,6 +556,9 @@ public class TabletSistemaVR : MonoBehaviour
             if (txt != null) txt.color = esSeleccionado ? colorVerdeSeleccionado : colorRosaNormal;
         }
 
+        if (audioFeedback && sonidoClickUI) audioFeedback.PlayOneShot(sonidoClickUI);
+        EnviarHapticPulso(0.25f, 0.05f);
+
         textoEstadoReporte.text = $"Seleccionado: {cuartoElegido} - {(TipoAnomalia)tipoElegido}";
         textoEstadoReporte.color = Color.white;
     }
@@ -402,6 +573,9 @@ public class TabletSistemaVR : MonoBehaviour
             par.Value.color = esSeleccionado ? new Color(0.15f, 0.35f, 0.2f, 1f) : colorBotonOscuro;
             if (txt != null) txt.color = esSeleccionado ? colorVerdeSeleccionado : colorRosaNormal;
         }
+
+        if (audioFeedback && sonidoClickUI) audioFeedback.PlayOneShot(sonidoClickUI);
+        EnviarHapticPulso(0.25f, 0.05f);
 
         textoEstadoReporte.text = $"Seleccionado: {cuartoElegido} - {(TipoAnomalia)tipoElegido}";
         textoEstadoReporte.color = Color.white;
@@ -504,12 +678,15 @@ public class TabletSistemaVR : MonoBehaviour
             inputModule = eventSystem.gameObject.AddComponent<XRUIInputModule>();
         }
         inputModule.enableXRInput = true;
+        inputModule.enableMouseInput = true;
+        inputModule.enableTouchInput = true;
         inputModule.enableBuiltinActionsAsFallback = true;
     }
 
     private GameObject CreateRect(string name, Transform parent, Vector2 size, Vector2 pos)
     {
         GameObject obj = new GameObject(name, typeof(RectTransform));
+        obj.layer = 5;
         obj.transform.SetParent(parent, false);
         RectTransform r = obj.GetComponent<RectTransform>();
         r.sizeDelta = size;
@@ -557,5 +734,23 @@ public class TabletSistemaVR : MonoBehaviour
 
         CreateText(img.transform, "Texto", label, Vector2.zero, size, fontSize, TextAnchor.MiddleCenter, txtCol);
         return btn;
+    }
+
+    private static AudioClip CrearTonoProcedural(string nombre, float freqInicio, float freqFin, float duracion, float volumen)
+    {
+        int sampleRate = 22050;
+        int samples = Mathf.Max(1, Mathf.RoundToInt(sampleRate * duracion));
+        float[] data = new float[samples];
+        for (int i = 0; i < samples; i++)
+        {
+            float progreso = (float)i / samples;
+            float t = (float)i / sampleRate;
+            float freq = Mathf.Lerp(freqInicio, freqFin, progreso);
+            float env = Mathf.Sin(progreso * Mathf.PI);
+            data[i] = Mathf.Sin(2f * Mathf.PI * freq * t) * env * volumen;
+        }
+        AudioClip clip = AudioClip.Create(nombre, samples, 1, sampleRate, false);
+        clip.SetData(data, 0);
+        return clip;
     }
 }

@@ -321,8 +321,29 @@ public class AutomatizadorCasaVR : EditorWindow
                 luzDiaObj.name = t.name + "_LuzDeDia_Unknown";
                 DestroyImmediate(luzDiaObj.GetComponent<BoxCollider>());
                 luzDiaObj.transform.SetParent(t, false);
-                luzDiaObj.transform.localPosition = Vector3.zero;
-                luzDiaObj.transform.localScale = new Vector3(1.2f, 1.5f, 0.05f);
+
+                MeshRenderer mrWin = t.GetComponent<MeshRenderer>();
+                Vector3 lossy = t.lossyScale;
+                float sx = Mathf.Abs(lossy.x) > 0.0001f ? 1f / Mathf.Abs(lossy.x) : 1f;
+                float sy = Mathf.Abs(lossy.y) > 0.0001f ? 1f / Mathf.Abs(lossy.y) : 1f;
+                float sz = Mathf.Abs(lossy.z) > 0.0001f ? 1f / Mathf.Abs(lossy.z) : 1f;
+
+                if (mrWin != null)
+                {
+                    Bounds wb = mrWin.bounds;
+                    luzDiaObj.transform.position = wb.center;
+                    luzDiaObj.transform.rotation = Quaternion.identity;
+                    luzDiaObj.transform.localScale = new Vector3(
+                        Mathf.Clamp(wb.size.x, 0.08f, 2.2f) * sx,
+                        Mathf.Clamp(wb.size.z, 0.08f, 2.2f) * sy,
+                        Mathf.Clamp(wb.size.y, 0.8f, 2.2f) * sz
+                    );
+                }
+                else
+                {
+                    luzDiaObj.transform.localPosition = Vector3.zero;
+                    luzDiaObj.transform.localScale = new Vector3(1.2f * sx, 0.05f * sy, 1.5f * sz);
+                }
 
                 // Material brillante color cielo de mediodía
                 Material matDia = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
@@ -354,21 +375,41 @@ public class AutomatizadorCasaVR : EditorWindow
             }
 
             // 2. Puertas que se abren solas indicando que alguien entró (Unknown)
+            bool esPuertaCasa = (n.StartsWith("door") || n.StartsWith("closet_door")) && !n.Contains("frame") && !n.Contains("clonmimic");
             PuertaAutoCierre puerta = t.GetComponent<PuertaAutoCierre>();
-            if (puerta != null && t.GetComponent<ObjetoAnomalia>() == null)
+            if (esPuertaCasa && puerta == null)
+                puerta = Undo.AddComponent<PuertaAutoCierre>(t.gameObject);
+
+            if (puerta != null)
             {
-                ObjetoAnomalia anomPuerta = Undo.AddComponent<ObjetoAnomalia>(t.gameObject);
-                anomPuerta.nombreCuarto = DetectarCuartoMasCercano(t.position, anclas);
-                anomPuerta.posiblesVariantes = new List<VarianteAnomalia>
+                ObjetoAnomalia anomPuerta = t.GetComponent<ObjetoAnomalia>();
+                if (anomPuerta == null)
                 {
-                    new VarianteAnomalia
+                    anomPuerta = Undo.AddComponent<ObjetoAnomalia>(t.gameObject);
+                    anomPuerta.nombreCuarto = DetectarCuartoMasCercano(t.position, anclas);
+                    anomPuerta.posiblesVariantes = new List<VarianteAnomalia>
                     {
-                        nombreDescriptivo = "Puerta se abre sola (Unknown)",
-                        tipo = TipoAnomalia.Unknown,
-                        puertaQueSeAbreSola = puerta
+                        new VarianteAnomalia
+                        {
+                            nombreDescriptivo = "Puerta se abre sola (Unknown)",
+                            tipo = TipoAnomalia.Unknown,
+                            puertaQueSeAbreSola = puerta
+                        }
+                    };
+                    puertasUnknown++;
+                }
+                else
+                {
+                    foreach (var v in anomPuerta.posiblesVariantes)
+                    {
+                        if (v != null && v.tipo == TipoAnomalia.Unknown && v.puertaQueSeAbreSola == null && v.objetoExtraActivable == null)
+                        {
+                            Undo.RecordObject(anomPuerta, "Vincular Puerta a ObjetoAnomalia");
+                            v.puertaQueSeAbreSola = puerta;
+                            puertasUnknown++;
+                        }
                     }
-                };
-                puertasUnknown++;
+                }
             }
         }
 
@@ -490,34 +531,34 @@ public class AutomatizadorCasaVR : EditorWindow
             Transform refBano = BuscarMueble(todosLosHijos, "washbasin_03");
             Transform refCocina = BuscarMueble(todosLosHijos, "refrigerator");
 
-            // A) PURE FORM (Sombra negra con ojos brillantes en la Sala)
+            // A) PURE FORM (Sombra negra con ojos brillantes en la Sala - Piso 1 y=0.41m)
             CrearEntidadPlaceholder("Anomalia_PureForm_Sala", TipoAnomalia.PureForm, "LivingRoom",
-                refSala != null ? refSala.position + new Vector3(-1.2f, 0f, 0.5f) : new Vector3(0, 0, 0),
+                refSala != null ? new Vector3(refSala.position.x - 1.2f, 0.41f, refSala.position.z + 0.5f) : new Vector3(10f, 0.41f, 1.8f),
                 contenedorEntidades.transform, true, false, false);
 
-            // B) PREACHER (Figura en rincón/clóset con sonido en bucle en Recámara)
+            // B) PREACHER (Figura en rincón/clóset con sonido en bucle en Recámara - Piso 2 y=3.74m)
             CrearEntidadPlaceholder("Anomalia_Preacher_Closet", TipoAnomalia.Preacher, "Bedroom",
-                refRecamara != null ? refRecamara.position + new Vector3(0.8f, 0f, 0.5f) : new Vector3(2, 3, 0),
+                refRecamara != null ? new Vector3(refRecamara.position.x + 0.8f, 3.74f, refRecamara.position.z + 0.5f) : new Vector3(23f, 3.74f, -7.1f),
                 contenedorEntidades.transform, false, false, true);
 
-            // C) FLAWED (Figura deforme/incompleta junto a la cama)
+            // C) FLAWED (Figura deforme/incompleta junto a la cama - Piso 2 y=3.74m)
             CrearEntidadPlaceholder("Anomalia_Flawed_Recamara", TipoAnomalia.Flawed, "Bedroom",
-                refCama != null ? refCama.position + new Vector3(1.0f, 0f, -0.8f) : new Vector3(-2, 3, 0),
+                refCama != null ? new Vector3(refCama.position.x + 1.0f, 3.74f, refCama.position.z - 0.8f) : new Vector3(23.9f, 3.74f, -3.2f),
                 contenedorEntidades.transform, false, false, false);
 
-            // D) TULPA (Entidad en el espejo/lavabo del Baño)
+            // D) TULPA (Entidad en el espejo/lavabo del Baño - Piso 1 y=0.41m)
             CrearEntidadPlaceholder("Anomalia_Tulpa_EspejoBano", TipoAnomalia.Tulpa, "Bathroom",
-                refBano != null ? refBano.position + new Vector3(0f, 0f, -0.4f) : new Vector3(0, 0, 3),
+                refBano != null ? new Vector3(refBano.position.x, 0.41f, refBano.position.z - 0.4f) : new Vector3(18.8f, 0.41f, -6.6f),
                 contenedorEntidades.transform, true, false, false);
 
-            // E) CORPSE (Cuerpo tirado en el suelo de la Cocina)
+            // E) CORPSE (Cuerpo tirado en el suelo de la Cocina - Piso 1 y=0.57m)
             CrearEntidadPlaceholder("Anomalia_Corpse_Cocina", TipoAnomalia.Corpse, "Kitchen",
-                refCocina != null ? refCocina.position + new Vector3(1.2f, 0.15f, 1.0f) : new Vector3(1, 0.15f, 1),
+                refCocina != null ? new Vector3(refCocina.position.x + 1.2f, 0.57f, refCocina.position.z + 1.0f) : new Vector3(12.5f, 0.57f, -4.7f),
                 contenedorEntidades.transform, false, true, false);
 
-            // F) UNKNOWN EXTRA: Mensaje escrito con sangre en la pared
+            // F) UNKNOWN EXTRA: Mensaje escrito con sangre en la pared a altura de ojos (y=1.78m)
             CrearMensajeParedUnknown("Anomalia_MensajePared_Unknown", "LivingRoom",
-                refSala != null ? refSala.position + new Vector3(0f, 1.5f, -0.2f) : new Vector3(0, 1.5f, 0),
+                refSala != null ? new Vector3(refSala.position.x, 1.78f, refSala.position.z + 0.95f) : new Vector3(10.02f, 1.78f, 2.25f),
                 contenedorEntidades.transform);
         }
 
@@ -547,7 +588,7 @@ public class AutomatizadorCasaVR : EditorWindow
         GameObject cuerpo = GameObject.CreatePrimitive(PrimitiveType.Capsule);
         DestroyImmediate(cuerpo.GetComponent<CapsuleCollider>());
         cuerpo.transform.SetParent(visual.transform, false);
-        cuerpo.transform.localPosition = new Vector3(0, 0.9f, 0);
+        cuerpo.transform.localPosition = acostado ? Vector3.zero : new Vector3(0, 0.9f, 0);
         cuerpo.transform.localScale = tipo == TipoAnomalia.Flawed ? new Vector3(0.35f, 1.1f, 0.2f) : new Vector3(0.45f, 0.9f, 0.3f);
 
         Material matNegro = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
@@ -608,9 +649,11 @@ public class AutomatizadorCasaVR : EditorWindow
         textoObj.transform.SetParent(ancla.transform, false);
         TextMeshPro tmp = textoObj.AddComponent<TextMeshPro>();
         tmp.text = "NO MIRES ATRÁS";
-        tmp.fontSize = 3f;
+        tmp.fontSize = 2.2f;
         tmp.color = new Color(0.6f, 0.02f, 0.02f);
         tmp.alignment = TextAlignmentOptions.Center;
+        RectTransform rt = tmp.GetComponent<RectTransform>();
+        if (rt != null) rt.sizeDelta = new Vector2(2.4f, 0.7f);
         textoObj.SetActive(false);
 
         ObjetoAnomalia anom = ancla.AddComponent<ObjetoAnomalia>();
