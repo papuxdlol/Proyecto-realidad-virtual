@@ -20,6 +20,9 @@ public sealed class HorrorMainMenu : MonoBehaviour
     };
     private static readonly string[] ClockNumbers = { "XII", "III", "VI", "IX" };
 
+    [SerializeField] private AudioClip menuMusic;
+    [SerializeField] private AudioClip menuClick;
+
     private enum MenuSection
     {
         None,
@@ -66,12 +69,34 @@ public sealed class HorrorMainMenu : MonoBehaviour
     private GameObject vrSectionContent;
     private bool reportedMissingXrCamera;
     private string lastVrClockDigitalTime;
+    private AudioSource menuAudioSource;
 
     private void Awake()
     {
         menuOpenedAt = Time.unscaledTime;
         Cursor.visible = true;
         Cursor.lockState = CursorLockMode.None;
+
+        menuAudioSource = GetComponent<AudioSource>();
+        if (menuAudioSource == null)
+        {
+            menuAudioSource = gameObject.AddComponent<AudioSource>();
+        }
+
+        menuAudioSource.playOnAwake = false;
+        menuAudioSource.spatialBlend = 0f;
+        menuAudioSource.loop = true;
+
+        if (menuMusic != null)
+        {
+            menuAudioSource.clip = menuMusic;
+            menuAudioSource.Play();
+        }
+
+        if (menuMusic == null || menuClick == null)
+        {
+            Debug.LogError("Asigna la música y el sonido de clic en HorrorMainMenu.", this);
+        }
 
     }
 
@@ -409,7 +434,11 @@ public sealed class HorrorMainMenu : MonoBehaviour
         colors.selectedColor = colors.highlightedColor;
         colors.fadeDuration = 0.05f;
         button.colors = colors;
-        button.onClick.AddListener(onClick);
+        button.onClick.AddListener(() =>
+        {
+            PlayMenuClick();
+            onClick();
+        });
 
         CreateVrText(
             "Label " + label,
@@ -488,6 +517,7 @@ public sealed class HorrorMainMenu : MonoBehaviour
             bool clicked = GUI.Button(rect, MenuLabels[i], style);
             if (clicked)
             {
+                PlayMenuClick();
                 ActivateMenuItem(i, MenuSections[i]);
             }
         }
@@ -668,6 +698,7 @@ public sealed class HorrorMainMenu : MonoBehaviour
         float backWidth = 160f * scale;
         if (GUI.Button(new Rect(panel.x + 22f * scale, panel.y + panel.height - 54f * scale, backWidth, 34f * scale), "VOLVER", buttonStyle))
         {
+            PlayMenuClick();
             openSection = MenuSection.None;
             menuOpenedAt = Time.unscaledTime;
         }
@@ -678,6 +709,14 @@ public sealed class HorrorMainMenu : MonoBehaviour
     private float GetIntroProgress()
     {
         return Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((Time.unscaledTime - menuOpenedAt) / 0.48f));
+    }
+
+    private void PlayMenuClick()
+    {
+        if (menuClick != null && menuAudioSource != null)
+        {
+            menuAudioSource.PlayOneShot(menuClick);
+        }
     }
 
     private void EnsureStyles()
