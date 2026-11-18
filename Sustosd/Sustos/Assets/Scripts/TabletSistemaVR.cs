@@ -2,18 +2,14 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using UnityEngine.XR;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
 using UnityEngine.XR.Interaction.Toolkit.UI;
-using Keyboard = UnityEngine.InputSystem.Keyboard;
 
 public class TabletSistemaVR : MonoBehaviour
 {
     public static TabletSistemaVR Instancia;
-
-    private const string MainMenuSceneName = "MenuPrincipal";
 
     [Header("1. Configuración del Turno (00:00 a 06:00 AM)")]
     public float duracionHoraEnSegundos = 50f;
@@ -33,12 +29,9 @@ public class TabletSistemaVR : MonoBehaviour
 
     private Canvas tabletCanvas;
     private GameObject panelAnomalias;
-    private GameObject panelPausaPrincipal;
-    private GameObject panelOpcionesVolumen;
 
     private Text textoRelojHeader;
     private Text textoEstadoReporte;
-    private Text textoBotonPausaHeader;
 
     private Dictionary<string, Image> botonesCuartos = new Dictionary<string, Image>();
     private Dictionary<int, Image> botonesTipos = new Dictionary<int, Image>();
@@ -47,10 +40,6 @@ public class TabletSistemaVR : MonoBehaviour
     private int tipoElegido = 0;
     private int anomaliasCorregidas = 0;
     private bool fusiblesReparadosReciente = false;
-
-    private bool isPaused = false;
-    private float previousTimeScale = 1f;
-    private bool aButtonWasPressed = false;
     private InputDevice rightController;
 
     private readonly Color colorRosaNormal = new Color(0.85f, 0.55f, 0.58f, 1f);
@@ -134,7 +123,7 @@ public class TabletSistemaVR : MonoBehaviour
 
     private void Update()
     {
-        if (!isPaused && horaActual < 6)
+        if (!VRPauseMenu.IsMenuOpen && horaActual < 6)
         {
             // 1. Avanzar el reloj de la noche
             relojInterno += Time.deltaTime;
@@ -154,29 +143,12 @@ public class TabletSistemaVR : MonoBehaviour
             }
         }
 
-        // 3. Detectar Botón A del control derecho (o tecla P en PC) para Pausar/Reanudar
-        if (!rightController.isValid)
-            rightController = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
-
-        bool botonAPresionado = false;
-        if (rightController.isValid &&
-            rightController.TryGetFeatureValue(CommonUsages.primaryButton, out bool aBtn) && aBtn)
-        {
-            botonAPresionado = true;
-        }
-
-        if (botonAPresionado && !aButtonWasPressed)
-            AlternarPausaEnTablet();
-
-        aButtonWasPressed = botonAPresionado;
-
-        if (Keyboard.current != null && Keyboard.current.pKey.wasPressedThisFrame)
-            AlternarPausaEnTablet();
     }
 
     private void OnDestroy()
     {
-        if (isPaused) Time.timeScale = 1f;
+        if (Instancia == this)
+            Instancia = null;
     }
 
     // =========================================================================
@@ -402,7 +374,6 @@ public class TabletSistemaVR : MonoBehaviour
             new Vector2(pausaX * uiScale, 0f), pausaSize * uiScale,
             new Color(0.55f, 0.14f, 0.16f, 1f), Color.white,
             Mathf.RoundToInt((portrait ? 26f : 18f) * uiScale), AlternarPausaEnTablet);
-        textoBotonPausaHeader = btnPausaTop.GetComponentInChildren<Text>();
 
         // 2. PANEL DE REPORTE DE ANOMALÍAS
         panelAnomalias = CreateRect("App_Reporte_Anomalias", tabletCanvas.transform, canvasSize, Vector2.zero);
@@ -491,58 +462,6 @@ public class TabletSistemaVR : MonoBehaviour
             Mathf.RoundToInt((portrait ? 34f : 22f) * uiScale),
             EnviarReporteAlGestor);
 
-        // 3. PANEL DE PAUSA INTEGRADO
-        panelPausaPrincipal = CreateRect("App_Menu_Pausa", tabletCanvas.transform, canvasSize, Vector2.zero);
-        CreateImage(panelPausaPrincipal.transform, "Bg_Pausa",
-            new Vector2((designWidth - 40f) * uiScale, (designHeight - 40f) * uiScale),
-            Vector2.zero, new Color(0.02f, 0.02f, 0.03f, 0.98f)).raycastTarget = false;
-
-        float pauseTitleY = portrait ? 320f : 205f;
-        CreateText(panelPausaPrincipal.transform, "Titulo_Pausa", "JUEGO EN PAUSA",
-            new Vector2(0f, pauseTitleY * uiScale), new Vector2((designWidth - 80f) * uiScale, 60f * uiScale),
-            Mathf.RoundToInt((portrait ? 42f : 28f) * uiScale), TextAnchor.MiddleCenter, Color.white);
-
-        float[] pauseButtonY = portrait
-            ? new[] { 160f, 30f, -100f, -230f }
-            : new[] { 110f, 30f, -50f, -130f };
-        Vector2 pauseButtonSize = (portrait ? new Vector2(520f, 90f) : new Vector2(600f, 62f)) * uiScale;
-        int pauseFontSize = Mathf.RoundToInt((portrait ? 30f : 21f) * uiScale);
-        CreateButton(panelPausaPrincipal.transform, "Btn_Continuar", "CONTINUAR TURNO",
-            new Vector2(0f, pauseButtonY[0] * uiScale), pauseButtonSize,
-            new Color(0.48f, 0.12f, 0.15f, 1f), Color.white, pauseFontSize, ReanudarJuego);
-
-        CreateButton(panelPausaPrincipal.transform, "Btn_Opciones", "OPCIONES DE AUDIO",
-            new Vector2(0f, pauseButtonY[1] * uiScale), pauseButtonSize,
-            colorBotonOscuro, Color.white, pauseFontSize, AbrirPanelOpciones);
-
-        CreateButton(panelPausaPrincipal.transform, "Btn_MenuPrincipal", "VOLVER AL INICIO",
-            new Vector2(0f, pauseButtonY[2] * uiScale), pauseButtonSize,
-            colorBotonOscuro, Color.white, pauseFontSize, VolverAlMenuPrincipal);
-
-        CreateButton(panelPausaPrincipal.transform, "Btn_Salir", "SALIR DEL JUEGO",
-            new Vector2(0f, pauseButtonY[3] * uiScale), pauseButtonSize,
-            colorBotonOscuro, Color.white, pauseFontSize, SalirDelJuego);
-
-        // 4. PANEL DE OPCIONES DE VOLUMEN
-        panelOpcionesVolumen = CreateRect("App_Opciones_Volumen", tabletCanvas.transform, canvasSize, Vector2.zero);
-        CreateImage(panelOpcionesVolumen.transform, "Bg_Opciones",
-            new Vector2((designWidth - 40f) * uiScale, (designHeight - 40f) * uiScale),
-            Vector2.zero, new Color(0.02f, 0.02f, 0.03f, 0.98f)).raycastTarget = false;
-        CreateText(panelOpcionesVolumen.transform, "Titulo_Opciones", "AJUSTE DE VOLUMEN",
-            new Vector2(0f, (portrait ? 250f : 200f) * uiScale),
-            new Vector2((designWidth - 80f) * uiScale, 60f * uiScale),
-            Mathf.RoundToInt((portrait ? 38f : 28f) * uiScale), TextAnchor.MiddleCenter, Color.white);
-
-        CrearSliderVolumen(panelOpcionesVolumen.transform, uiScale);
-
-        CreateButton(panelOpcionesVolumen.transform, "Btn_VolverPausa", "VOLVER A PAUSA",
-            new Vector2(0f, (portrait ? -160f : -170f) * uiScale),
-            (portrait ? new Vector2(460f, 90f) : new Vector2(500f, 62f)) * uiScale,
-            new Color(0.48f, 0.12f, 0.15f, 1f), Color.white,
-            Mathf.RoundToInt((portrait ? 30f : 21f) * uiScale), MostrarMenuPausaPrincipal);
-
-        panelPausaPrincipal.SetActive(false);
-        panelOpcionesVolumen.SetActive(false);
     }
 
     private void SeleccionarCuartoUI(string cuarto)
@@ -583,83 +502,13 @@ public class TabletSistemaVR : MonoBehaviour
 
     public void AlternarPausaEnTablet()
     {
-        if (isPaused) ReanudarJuego();
-        else PausarJuego();
-    }
+        if (VRPauseMenu.Instance == null)
+        {
+            Debug.LogWarning("No se encontró el menú de pausa VR para mostrarlo frente al jugador.", this);
+            return;
+        }
 
-    private void PausarJuego()
-    {
-        previousTimeScale = Time.timeScale;
-        Time.timeScale = 0f;
-        isPaused = true;
-
-        panelAnomalias.SetActive(false);
-        panelOpcionesVolumen.SetActive(false);
-        panelPausaPrincipal.SetActive(true);
-
-        if (textoBotonPausaHeader != null)
-            textoBotonPausaHeader.text = "VOLVER [A]";
-    }
-
-    private void ReanudarJuego()
-    {
-        Time.timeScale = previousTimeScale > 0f ? previousTimeScale : 1f;
-        isPaused = false;
-
-        panelPausaPrincipal.SetActive(false);
-        panelOpcionesVolumen.SetActive(false);
-        panelAnomalias.SetActive(true);
-
-        if (textoBotonPausaHeader != null)
-            textoBotonPausaHeader.text = "PAUSA [A]";
-    }
-
-    private void AbrirPanelOpciones()
-    {
-        panelPausaPrincipal.SetActive(false);
-        panelOpcionesVolumen.SetActive(true);
-    }
-
-    private void MostrarMenuPausaPrincipal()
-    {
-        panelOpcionesVolumen.SetActive(false);
-        panelPausaPrincipal.SetActive(true);
-    }
-
-    private void VolverAlMenuPrincipal()
-    {
-        Time.timeScale = 1f;
-        isPaused = false;
-        SceneManager.LoadScene(MainMenuSceneName);
-    }
-
-    private void SalirDelJuego()
-    {
-        Time.timeScale = 1f;
-        Application.Quit();
-    }
-
-    private void CrearSliderVolumen(Transform parent, float uiScale)
-    {
-        Image track = CreateImage(parent, "Barra_Volumen", new Vector2(500f, 45f) * uiScale,
-            new Vector2(0f, 60f * uiScale), new Color(0.18f, 0.19f, 0.22f, 1f));
-        RectTransform fillRect = CreateRect("Relleno_Volumen", track.transform, Vector2.zero, Vector2.zero).GetComponent<RectTransform>();
-        fillRect.anchorMin = Vector2.zero;
-        fillRect.anchorMax = new Vector2(0f, 1f);
-        fillRect.offsetMin = Vector2.zero;
-        fillRect.offsetMax = Vector2.zero;
-
-        Image fill = fillRect.gameObject.AddComponent<Image>();
-        fill.color = new Color(0.64f, 0.15f, 0.18f, 1f);
-
-        Slider slider = track.gameObject.AddComponent<Slider>();
-        slider.fillRect = fillRect;
-        slider.targetGraphic = track;
-        slider.minValue = 0f;
-        slider.maxValue = 1f;
-        slider.value = AudioListener.volume;
-        slider.navigation = new Navigation { mode = Navigation.Mode.None };
-        slider.onValueChanged.AddListener((v) => AudioListener.volume = v);
+        VRPauseMenu.Instance.ToggleMenu();
     }
 
     private void EnsureUiEventSystem()

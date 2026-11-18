@@ -1,27 +1,48 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using UnityEngine.XR;
 using UnityEngine.XR.Interaction.Toolkit.UI;
+using InputDevice = UnityEngine.XR.InputDevice;
+using Keyboard = UnityEngine.InputSystem.Keyboard;
 
 public sealed class VRPauseMenu : MonoBehaviour
 {
     private const string MainMenuSceneName = "MenuPrincipal";
+    private const int PauseVolumeLayer = 30;
 
     private Canvas menuCanvas;
     private GameObject pauseMenuRoot;
     private GameObject mainMenuPanel;
     private GameObject optionsPanel;
     private Camera xrCamera;
-    private float previousTimeScale = 1f;
+    private UniversalAdditionalCameraData xrCameraData;
+    private Volume pauseBlurVolume;
+    private VolumeProfile pauseBlurProfile;
+    private LayerMask previousVolumeLayerMask;
+    private bool previousPostProcessing;
+    private bool hasCameraSettings;
     private bool isMenuOpen;
     private bool aButtonWasPressed;
     private bool reportedMissingCamera;
     private InputDevice rightController;
 
+    public static VRPauseMenu Instance { get; private set; }
+    public static bool IsMenuOpen { get; private set; }
+
     private void Awake()
     {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(this);
+            return;
+        }
+
+        Instance = this;
+        IsMenuOpen = false;
         EnsureUiEventSystem();
     }
 
@@ -56,14 +77,25 @@ public sealed class VRPauseMenu : MonoBehaviour
         {
             aButtonWasPressed = false;
         }
+
+        if (Keyboard.current != null && Keyboard.current.pKey.wasPressedThisFrame)
+        {
+            ToggleMenu();
+        }
     }
 
     private void OnDestroy()
     {
-        if (isMenuOpen)
+        SetPauseEffects(false);
+        if (Instance == this)
         {
-            Time.timeScale = previousTimeScale;
+            IsMenuOpen = false;
+            Instance = null;
         }
+        if (pauseBlurProfile != null)
+            Destroy(pauseBlurProfile);
+        if (pauseBlurVolume != null)
+            Destroy(pauseBlurVolume.gameObject);
     }
 
     private void EnsureUiEventSystem()
@@ -111,7 +143,10 @@ public sealed class VRPauseMenu : MonoBehaviour
             typeof(Canvas),
             typeof(CanvasScaler),
             typeof(TrackedDeviceGraphicRaycaster));
-        canvasObject.transform.position = xrCamera.transform.position;
+        canvasObject.layer = 5;
+        canvasObject.transform.SetParent(xrCamera.transform, false);
+        canvasObject.transform.localPosition = new Vector3(0f, 0f, 1.6f);
+        canvasObject.transform.localRotation = Quaternion.identity;
         canvasObject.transform.localScale = Vector3.one * 0.0015f;
 
         RectTransform canvasRect = (RectTransform)canvasObject.transform;
@@ -121,6 +156,7 @@ public sealed class VRPauseMenu : MonoBehaviour
         menuCanvas.renderMode = RenderMode.WorldSpace;
         menuCanvas.worldCamera = xrCamera;
         menuCanvas.sortingOrder = 200;
+        CreatePauseBlurVolume();
 
         CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
         scaler.dynamicPixelsPerUnit = 10f;
@@ -179,7 +215,7 @@ public sealed class VRPauseMenu : MonoBehaviour
         AudioListener.volume = volume;
     }
 
-    private void ToggleMenu()
+    public void ToggleMenu()
     {
         if (pauseMenuRoot == null)
         {
@@ -187,27 +223,25 @@ public sealed class VRPauseMenu : MonoBehaviour
         }
 
         if (isMenuOpen)
-        {
             ResumeGame();
-            return;
-        }
+        else
+            OpenMenu();
+    }
 
-        previousTimeScale = Time.timeScale;
-        PositionMenuInFrontOfCamera();
-        Time.timeScale = 0f;
+    private void OpenMenu()
+    {
         isMenuOpen = true;
+        IsMenuOpen = true;
+        SetPauseEffects(true);
         ShowMainMenu();
         pauseMenuRoot.SetActive(true);
     }
 
     private void ResumeGame()
     {
-        if (isMenuOpen)
-        {
-            Time.timeScale = previousTimeScale;
-        }
-
         isMenuOpen = false;
+        IsMenuOpen = false;
+        SetPauseEffects(false);
         if (pauseMenuRoot != null)
         {
             pauseMenuRoot.SetActive(false);
@@ -238,24 +272,67 @@ public sealed class VRPauseMenu : MonoBehaviour
         Application.Quit();
     }
 
-    private void PositionMenuInFrontOfCamera()
+    private void CreatePauseBlurVolume()
     {
-        if (xrCamera == null)
+        GameObject volumeObject = new GameObject("Desenfoque del entorno al pausar", typeof(Volume));
+        volumeObject.layer = PauseVolumeLayer;
+        pauseBlurVolume = volumeObject.GetComponent<Volume>();
+        pauseBlurVolume.isGlobal = true;
+        pauseBlurVolume.priority = 100f;
+        pauseBlurVolume.weight = 0f;
+
+        pauseBlurProfile = ScriptableObject.CreateInstance<VolumeProfile>();
+        pauseBlurVolume.sharedProfile = pauseBlurProfile;
+        DepthOfField depthOfField = pauseBlurProfile.Add<DepthOfField>(true);
+        depthOfField.mode.Override(DepthOfFieldMode.Gaussian);
+        depthOfField.gaussianStart.Override(1.6f);
+        depthOfField.gaussianEnd.Override(5f);
+        depthOfField.gaussianMaxRadius.Override(1f);
+    }
+
+    private void SetPauseEffects(bool active)
+    {
+        if (xrCamera == null || pauseBlurVolume == null)
+            return;
+
+        if (xrCameraData == null)
+            xrCameraData = xrCamera.GetComponent<UniversalAdditionalCameraData>();
+
+        if (xrCameraData == null)
         {
+            Debug.LogError("La cámara XR necesita UniversalAdditionalCameraData para aplicar el desenfoque de pausa.", this);
             return;
         }
 
-        Vector3 menuForward = xrCamera.transform.forward;
-        menuForward.y = 0f;
-        menuForward = menuForward.sqrMagnitude > 0.001f ? menuForward.normalized : Vector3.forward;
-        menuCanvas.transform.SetPositionAndRotation(
-            xrCamera.transform.position + menuForward * 1.6f,
-            Quaternion.LookRotation(menuForward, Vector3.up));
+        if (active)
+        {
+            if (!hasCameraSettings)
+            {
+                previousPostProcessing = xrCameraData.renderPostProcessing;
+                previousVolumeLayerMask = xrCameraData.volumeLayerMask;
+                hasCameraSettings = true;
+            }
+
+            xrCameraData.renderPostProcessing = true;
+            xrCameraData.volumeLayerMask = 1 << PauseVolumeLayer;
+            pauseBlurVolume.weight = 1f;
+        }
+        else
+        {
+            pauseBlurVolume.weight = 0f;
+            if (hasCameraSettings)
+            {
+                xrCameraData.renderPostProcessing = previousPostProcessing;
+                xrCameraData.volumeLayerMask = previousVolumeLayerMask;
+                hasCameraSettings = false;
+            }
+        }
     }
 
     private GameObject CreateRectObject(string objectName, Transform parent)
     {
         GameObject newObject = new GameObject(objectName, typeof(RectTransform));
+        newObject.layer = 5;
         newObject.transform.SetParent(parent, false);
         RectTransform rect = (RectTransform)newObject.transform;
         rect.anchorMin = new Vector2(0.5f, 0.5f);
@@ -267,6 +344,7 @@ public sealed class VRPauseMenu : MonoBehaviour
     private Image CreateVrImage(Transform parent, string objectName, Vector2 size, Vector2 position, Color color)
     {
         GameObject imageObject = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        imageObject.layer = 5;
         imageObject.transform.SetParent(parent, false);
         RectTransform rect = (RectTransform)imageObject.transform;
         rect.anchorMin = new Vector2(0.5f, 0.5f);
@@ -282,6 +360,7 @@ public sealed class VRPauseMenu : MonoBehaviour
     private Text CreateVrText(Transform parent, string objectName, string content, Vector2 position, Vector2 size, int fontSize, TextAnchor alignment, FontStyle style = FontStyle.Normal)
     {
         GameObject textObject = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        textObject.layer = 5;
         textObject.transform.SetParent(parent, false);
         RectTransform rect = (RectTransform)textObject.transform;
         rect.anchorMin = new Vector2(0.5f, 0.5f);
