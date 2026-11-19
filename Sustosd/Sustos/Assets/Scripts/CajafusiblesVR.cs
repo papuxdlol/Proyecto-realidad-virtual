@@ -1,8 +1,6 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
-using Keyboard = UnityEngine.InputSystem.Keyboard;
-using Mouse = UnityEngine.InputSystem.Mouse;
-using UnityEngine.XR;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
@@ -15,13 +13,17 @@ public class CajaFusiblesVR : MonoBehaviour
     public Light luzIndicadora;
     public AudioSource sonidoPalanca;
 
+    [Header("Estado de Energía General")]
+    public bool energiaGeneralActiva = true;
+    public float delayConmutacion = 0.18f;
+    public float cooldownInteraccion = 0.50f;
+
     private ObjetoAnomalia anomaliaApagon;
     private XRSimpleInteractable interactable;
-    private bool rayoEncima = false;
-    private float tiempoTironManual = -10f;
+    private Coroutine rutinaConmutacion;
     private int ultimaInteraccionFrame = -1;
-    private float ultimoTiempoInteraccion = -1f;
-    private bool triggerAnteriorVR = false;
+    private float ultimoTiempoInteraccion = -10f;
+    private bool apagonEstabaActivo = false;
 
     private static AudioClip clipPalancaProcedural;
 
@@ -39,6 +41,14 @@ public class CajaFusiblesVR : MonoBehaviour
         if (luzIndicadora == null)
             luzIndicadora = GetComponentInChildren<Light>(true);
 
+        // Calibrar el LED indicador para que sea un foco pequeño de tablero y no ilumine todo el garaje de verde
+        if (luzIndicadora != null)
+        {
+            luzIndicadora.intensity = 0.35f;
+            luzIndicadora.range = 0.85f;
+            luzIndicadora.shadows = LightShadows.None;
+        }
+
         if (sonidoPalanca == null)
         {
             sonidoPalanca = GetComponent<AudioSource>();
@@ -55,7 +65,6 @@ public class CajaFusiblesVR : MonoBehaviour
         if (bc == null)
             bc = gameObject.AddComponent<BoxCollider>();
 
-        // Agrandar ligeramente el BoxCollider hacia adelante para que ningún collider de pared lo tape
         bc.isTrigger = false;
         bc.size = new Vector3(1.5f, 1.4f, 2.4f);
         bc.center = new Vector3(0f, 0f, -0.3f);
@@ -73,6 +82,9 @@ public class CajaFusiblesVR : MonoBehaviour
                 mgr.RegisterInteractable(interactable as IXRInteractable);
             }
         }
+
+        energiaGeneralActiva = true;
+        InterruptorLuz.EnergiaGeneralCasaActiva = true;
     }
 
     void OnEnable()
@@ -84,8 +96,6 @@ public class CajaFusiblesVR : MonoBehaviour
         {
             interactable.selectEntered.AddListener(AlTirarPalanca);
             interactable.activated.AddListener(AlActivarPalanca);
-            interactable.hoverEntered.AddListener(OnHoverEnter);
-            interactable.hoverExited.AddListener(OnHoverExit);
         }
     }
 
@@ -95,14 +105,8 @@ public class CajaFusiblesVR : MonoBehaviour
         {
             interactable.selectEntered.RemoveListener(AlTirarPalanca);
             interactable.activated.RemoveListener(AlActivarPalanca);
-            interactable.hoverEntered.RemoveListener(OnHoverEnter);
-            interactable.hoverExited.RemoveListener(OnHoverExit);
         }
-        rayoEncima = false;
     }
-
-    private void OnHoverEnter(HoverEnterEventArgs args) => rayoEncima = true;
-    private void OnHoverExit(HoverExitEventArgs args) => rayoEncima = interactable != null && interactable.isHovered;
 
     void OnMouseDown()
     {
@@ -113,35 +117,21 @@ public class CajaFusiblesVR : MonoBehaviour
 
     void Update()
     {
-        if (rayoEncima || (interactable != null && interactable.isHovered))
-        {
-            if (EventSystem.current == null || !EventSystem.current.IsPointerOverGameObject())
-            {
-                Mouse mouse = Mouse.current;
-                Keyboard teclado = Keyboard.current;
-                bool entradaPC =
-                    (mouse != null && mouse.leftButton.wasPressedThisFrame) ||
-                    (teclado != null && (teclado.gKey.wasPressedThisFrame || teclado.eKey.wasPressedThisFrame || teclado.fKey.wasPressedThisFrame));
-
-                bool triggerVR = LeerTriggerVR();
-                bool entradaVR = triggerVR && !triggerAnteriorVR;
-                triggerAnteriorVR = triggerVR;
-
-                if (entradaPC || entradaVR)
-                    RepararFusibles(null);
-            }
-        }
-        else
-        {
-            triggerAnteriorVR = false;
-        }
-
         bool apagonActivo = anomaliaApagon != null && anomaliaApagon.estaActiva;
-        bool animandoTiron = (Time.unscaledTime - tiempoTironManual) < 0.35f;
+
+        // Si se acaba de activar la anomalía de apagón en la caja, bajar la palanca automáticamente
+        if (apagonActivo && !apagonEstabaActivo)
+        {
+            energiaGeneralActiva = false;
+            InterruptorLuz.EnergiaGeneralCasaActiva = false;
+        }
+        apagonEstabaActivo = apagonActivo;
+
+        bool palancaAbajo = apagonActivo || !energiaGeneralActiva;
 
         if (palancaVisual != null)
         {
-            float anguloObjetivo = (apagonActivo || animandoTiron) ? 45f : -35f;
+            float anguloObjetivo = palancaAbajo ? 45f : -35f;
             palancaVisual.localRotation = Quaternion.Lerp(
                 palancaVisual.localRotation,
                 Quaternion.Euler(anguloObjetivo, 0f, 0f),
@@ -150,21 +140,10 @@ public class CajaFusiblesVR : MonoBehaviour
 
         if (luzIndicadora != null)
         {
-            luzIndicadora.color = apagonActivo ? Color.red : Color.green;
+            luzIndicadora.color = palancaAbajo ? new Color(1f, 0.15f, 0.15f) : new Color(0.15f, 0.95f, 0.25f);
+            luzIndicadora.intensity = 0.35f;
+            luzIndicadora.range = 0.85f;
         }
-    }
-
-    private bool LeerTriggerVR()
-    {
-        InputDevice right = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
-        if (right.isValid && right.TryGetFeatureValue(CommonUsages.triggerButton, out bool rTrig) && rTrig)
-            return true;
-
-        InputDevice left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
-        if (left.isValid && left.TryGetFeatureValue(CommonUsages.triggerButton, out bool lTrig) && lTrig)
-            return true;
-
-        return false;
     }
 
     private void AlTirarPalanca(SelectEnterEventArgs args) => RepararFusibles(args.interactorObject);
@@ -173,11 +152,10 @@ public class CajaFusiblesVR : MonoBehaviour
     public void RepararFusibles(IXRInteractor interactor)
     {
         if (ultimaInteraccionFrame == Time.frameCount) return;
-        if (Time.unscaledTime - ultimoTiempoInteraccion < 0.25f) return;
+        if (Time.unscaledTime - ultimoTiempoInteraccion < cooldownInteraccion) return;
 
         ultimaInteraccionFrame = Time.frameCount;
         ultimoTiempoInteraccion = Time.unscaledTime;
-        tiempoTironManual = Time.unscaledTime;
 
         if (sonidoPalanca != null && sonidoPalanca.clip != null)
             sonidoPalanca.PlayOneShot(sonidoPalanca.clip);
@@ -185,27 +163,48 @@ public class CajaFusiblesVR : MonoBehaviour
         if (interactor is XRBaseInputInteractor inputInteractor)
             inputInteractor.SendHapticImpulse(0.75f, 0.2f);
 
-        // Si había un apagón activo, al tocar la caja se restauran todas las luces de la casa
-        if (anomaliaApagon != null && anomaliaApagon.estaActiva)
+        if (rutinaConmutacion != null)
+            StopCoroutine(rutinaConmutacion);
+
+        rutinaConmutacion = StartCoroutine(RutinaConmutarCajaConDelay());
+    }
+
+    private IEnumerator RutinaConmutarCajaConDelay()
+    {
+        bool habiaApagonAnomalo = anomaliaApagon != null && anomaliaApagon.estaActiva;
+        bool nuevoEstadoEnergia = habiaApagonAnomalo ? true : !energiaGeneralActiva;
+
+        // Mover la palanca visual inmediatamente y esperar el delay mecánico antes de cortar/dar luz
+        energiaGeneralActiva = nuevoEstadoEnergia;
+
+        yield return new WaitForSeconds(delayConmutacion);
+
+        InterruptorLuz.EnergiaGeneralCasaActiva = energiaGeneralActiva;
+
+        if (habiaApagonAnomalo)
         {
             anomaliaApagon.RestaurarNormalidad();
             if (TabletSistemaVR.Instancia != null)
                 TabletSistemaVR.Instancia.NotificarFusiblesReparados();
-            Debug.Log("¡Caja de fusibles reparada manualmente en el Garaje!");
+            Debug.Log("[Caja de Fusibles] ¡Apagón reparado! Energía restaurada en toda la casa.");
         }
         else
         {
-            // Asegurar que todos los switches estén desbloqueados si se acciona la caja de fusibles
-            foreach (var sw in FindObjectsByType<InterruptorLuz>(FindObjectsSortMode.None))
+            InterruptorLuz[] todos = FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include);
+            foreach (InterruptorLuz sw in todos)
             {
-                if (sw != null && sw.bloqueadaPorAnomalia)
-                {
+                if (sw == null) continue;
+                if (energiaGeneralActiva && sw.bloqueadaPorAnomalia)
                     sw.bloqueadaPorAnomalia = false;
-                    sw.CambiarEstado(true);
-                }
+                sw.RefrescarSegunEnergiaGeneral();
             }
-            Debug.Log("[Caja de Fusibles] Palanca verificada: energía estable en toda la casa.");
+
+            Debug.Log(energiaGeneralActiva
+                ? "[Caja de Fusibles] Palanca ARRIBA: Energía general ENCENDIDA en toda la casa."
+                : "[Caja de Fusibles] Palanca ABAJO: Energía general APAGADA en toda la casa.");
         }
+
+        rutinaConmutacion = null;
     }
 
     private static AudioClip ObtenerClipPalanca()

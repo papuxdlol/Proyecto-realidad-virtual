@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 [RequireComponent(typeof(AudioSource))]
@@ -9,7 +10,6 @@ public sealed class SonidoAleatorioCiudad : MonoBehaviour
     [SerializeField] private AudioClip tikiTikiTikti;
     [SerializeField] private AudioClip enrique;
     [SerializeField] private AudioClip cuffem;
-    [SerializeField] private AudioClip fartExtremlyLoudMetal;
 
     private AudioSource audioSource;
     private AudioClip[] clips;
@@ -25,21 +25,21 @@ public sealed class SonidoAleatorioCiudad : MonoBehaviour
         audioSource.playOnAwake = false;
         audioSource.loop = false;
 
-        clips = new[] { tikiTikiTikti, enrique, cuffem, fartExtremlyLoudMetal };
-        for (int i = 0; i < clips.Length; i++)
+        List<AudioClip> validos = new List<AudioClip>(3);
+        if (tikiTikiTikti != null && !tikiTikiTikti.name.Contains("pipe")) validos.Add(tikiTikiTikti);
+        if (enrique != null && !enrique.name.Contains("pipe")) validos.Add(enrique);
+        if (cuffem != null && !cuffem.name.Contains("pipe")) validos.Add(cuffem);
+
+        clips = validos.ToArray();
+        if (clips.Length == 0)
         {
-            if (clips[i] == null)
-            {
-                Debug.LogError("Asigna los cuatro clips de eventos aleatorios de la ciudad.", this);
-                enabled = false;
-                return;
-            }
+            enabled = false;
         }
     }
 
     private void OnEnable()
     {
-        if (audioSource != null && clips != null && clips.Length == 4)
+        if (audioSource != null && clips != null && clips.Length > 0)
         {
             StartCoroutine(EvaluarEventos());
         }
@@ -52,9 +52,13 @@ public sealed class SonidoAleatorioCiudad : MonoBehaviour
         {
             yield return espera;
 
-            if (Random.value < ProbabilidadPorSegundo)
+            if (clips != null && clips.Length > 0 && Random.value < ProbabilidadPorSegundo)
             {
-                audioSource.PlayOneShot(clips[Random.Range(0, clips.Length)]);
+                AudioClip clip = clips[Random.Range(0, clips.Length)];
+                if (clip != null)
+                {
+                    audioSource.PlayOneShot(clip, 0.45f);
+                }
             }
         }
     }

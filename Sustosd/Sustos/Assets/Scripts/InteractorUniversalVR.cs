@@ -28,8 +28,7 @@ public class InteractorUniversalVR : MonoBehaviour
 
     void Awake()
     {
-        // Si este componente fue agregado por error a la Tablet, o ya existe otra instancia activa, destruir el duplicado
-        if (GetComponent<TabletSistemaVR>() != null || name.ToLower().Contains("tablet"))
+        if (GetComponent<TabletSistemaVR>() != null || name.ToLowerInvariant().Contains("tablet"))
         {
             Destroy(this);
             return;
@@ -42,13 +41,38 @@ public class InteractorUniversalVR : MonoBehaviour
         }
 
         Instancia = this;
+
+        // 1. Si hay un Meta Quest 2 real activo, desactivar el simulador de PC para que no bloquee la cámara ni los mandos
+        CiudadCameraLook.DesactivarSimuladorSiHayVisorReal();
+        AsegurarControlDeCamaraActivo();
+
+        // 2. Habilitar luces URP, noche oscura real, ventanas transparentes, vallas de límites y puerta faltante de Lavandería
         InterruptorLuz.HabilitarLucesAdicionalesEnURP();
+        VentanasYLimitesVR.ConfigurarNocheOscuraReal();
+        VentanasYLimitesVR.HacerVentanasTransparentes();
+        VentanasYLimitesVR.ConstruirBarrerasLimitesMapa();
+        VentanasYLimitesVR.RestaurarPuertaLavanderiaFaltante();
         AsegurarPuertasYSwitchesEnEscena();
     }
 
     void Start()
     {
         RefrescarCacheInteractivos();
+    }
+
+    private void AsegurarControlDeCamaraActivo()
+    {
+        CiudadCameraLook look = FindAnyObjectByType<CiudadCameraLook>(FindObjectsInactive.Include);
+        if (look != null)
+        {
+            if (!look.gameObject.activeSelf)
+                look.gameObject.SetActive(true);
+            look.enabled = true;
+        }
+        else
+        {
+            gameObject.AddComponent<CiudadCameraLook>();
+        }
     }
 
     public static void AsegurarPuertasYSwitchesEnEscena()
@@ -59,12 +83,11 @@ public class InteractorUniversalVR : MonoBehaviour
             foreach (Transform t in house.GetComponentsInChildren<Transform>(true))
             {
                 if (t == null) continue;
-                string n = t.name.ToLower();
+                string n = t.name.ToLowerInvariant();
 
                 bool esPuerta = (n.StartsWith("door") || n.StartsWith("closet_door")) && !n.Contains("frame") && !n.Contains("clonmimic");
                 if (!esPuerta) continue;
 
-                // NUNCA agregar PuertaAutoCierre a las mallas invisibles de House_Colliders
                 if (PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(t))
                 {
                     PuertaAutoCierre puertaInvalida = t.GetComponent<PuertaAutoCierre>();
@@ -95,10 +118,10 @@ public class InteractorUniversalVR : MonoBehaviour
 
     public void RefrescarCacheInteractivos()
     {
-        cacheSwitches = FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-        cacheFusibles = FindObjectsByType<CajaFusiblesVR>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        cacheSwitches = FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include);
+        cacheFusibles = FindObjectsByType<CajaFusiblesVR>(FindObjectsInactive.Include);
 
-        PuertaAutoCierre[] todasPuertas = FindObjectsByType<PuertaAutoCierre>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        PuertaAutoCierre[] todasPuertas = FindObjectsByType<PuertaAutoCierre>(FindObjectsInactive.Include);
         List<PuertaAutoCierre> puertasVisibles = new List<PuertaAutoCierre>();
         foreach (var pt in todasPuertas)
         {
@@ -107,7 +130,7 @@ public class InteractorUniversalVR : MonoBehaviour
         }
         cachePuertas = puertasVisibles.ToArray();
 
-        cacheRayosXR = FindObjectsByType<XRRayInteractor>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        cacheRayosXR = FindObjectsByType<XRRayInteractor>(FindObjectsInactive.Include);
     }
 
     void Update()
@@ -118,7 +141,6 @@ public class InteractorUniversalVR : MonoBehaviour
             return;
         }
 
-        // Si el jugador está apuntando a la interfaz UI de la Tablet, no interceptar el gatillo
         if (EstaApuntandoAInterfazUI())
         {
             objetivoActual = null;
@@ -131,7 +153,7 @@ public class InteractorUniversalVR : MonoBehaviour
 
         if (objetivoActual != null && DetectarPulsacion())
         {
-            if (Time.unscaledTime - ultimoTiempoAccion >= 0.22f)
+            if (Time.unscaledTime - ultimoTiempoAccion >= 0.32f)
             {
                 ultimoTiempoAccion = Time.unscaledTime;
                 EjecutarAccion(objetivoActual);
@@ -166,7 +188,6 @@ public class InteractorUniversalVR : MonoBehaviour
         Transform cam = Camera.main != null ? Camera.main.transform : transform;
         float mejorPuntaje = float.MaxValue;
 
-        // 1. Revisar todos los Switches
         if (cacheSwitches != null)
         {
             foreach (var sw in cacheSwitches)
@@ -176,7 +197,6 @@ public class InteractorUniversalVR : MonoBehaviour
             }
         }
 
-        // 2. Revisar la Caja de Fusibles
         if (cacheFusibles != null)
         {
             foreach (var cf in cacheFusibles)
@@ -186,7 +206,6 @@ public class InteractorUniversalVR : MonoBehaviour
             }
         }
 
-        // 3. Revisar todas las Puertas visibles
         if (cachePuertas != null)
         {
             foreach (var pt in cachePuertas)
@@ -194,7 +213,6 @@ public class InteractorUniversalVR : MonoBehaviour
                 if (pt == null || !pt.isActiveAndEnabled) continue;
                 if (PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(pt.transform)) continue;
 
-                // Usar el punto más cercano de la puerta a la línea de visión de la cámara además del centro
                 Vector3 puntoFrenteCam = cam.position + cam.forward * 1.1f;
                 Vector3 posCercana = pt.ObtenerPuntoMasCercano(puntoFrenteCam);
                 EvaluarCandidato(pt, posCercana, cam, ref mejorPuntaje, "Puerta");
@@ -208,10 +226,9 @@ public class InteractorUniversalVR : MonoBehaviour
         float distCam = Vector3.Distance(cam.position, posObjeto);
         if (distCam > distanciaMaxima) return;
 
-        // Evitar seleccionar objetos en un piso distinto (diferencia de altura > 1.85m)
         if (Mathf.Abs(cam.position.y - posObjeto.y) > 1.85f) return;
 
-        // A) Verificar si alguno de los rayos de los mandos VR apunta hacia el objeto (Ideal para Meta Quest 2)
+        // A) Verificar si alguno de los rayos de los mandos VR apunta hacia el objeto (Prioridad en Meta Quest 2)
         if (cacheRayosXR != null)
         {
             foreach (var ray in cacheRayosXR)
@@ -223,9 +240,9 @@ public class InteractorUniversalVR : MonoBehaviour
 
                 Vector3 dirDesdeMano = (posObjeto - rayOrigin.position).normalized;
                 float anguloRayo = Vector3.Angle(rayOrigin.forward, dirDesdeMano);
-                if (anguloRayo < 26f)
+                if (anguloRayo < 28f)
                 {
-                    float puntajeRayo = distMano * 0.65f + (anguloRayo * 0.04f);
+                    float puntajeRayo = distMano * 0.55f + (anguloRayo * 0.035f);
                     if (puntajeRayo < mejorPuntaje)
                     {
                         mejorPuntaje = puntajeRayo;
@@ -259,7 +276,6 @@ public class InteractorUniversalVR : MonoBehaviour
 
     private bool DetectarPulsacion()
     {
-        // 1. Teclado y Mouse en PC
         if (Keyboard.current != null)
         {
             if (Keyboard.current.eKey.wasPressedThisFrame ||
@@ -271,7 +287,6 @@ public class InteractorUniversalVR : MonoBehaviour
         if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
             return true;
 
-        // 2. Controles reales de Meta Quest 2 (New Input System + XR InputDevices)
         bool vrPresionado = LeerPulsacionControlesVR();
         if (vrPresionado && !botonVRAnterior)
         {
@@ -288,7 +303,6 @@ public class InteractorUniversalVR : MonoBehaviour
         if (LeerControlesXR(XRNode.RightHand) || LeerControlesXR(XRNode.LeftHand))
             return true;
 
-        // Respaldo con New Input System XRController para OpenXR en Meta Quest 2
         if (LeerNewInputXR(XRController.rightHand) || LeerNewInputXR(XRController.leftHand))
             return true;
 
@@ -312,7 +326,7 @@ public class InteractorUniversalVR : MonoBehaviour
         {
             if (control is UnityEngine.InputSystem.Controls.ButtonControl btn)
             {
-                string n = btn.name.ToLower();
+                string n = btn.name.ToLowerInvariant();
                 if ((n.Contains("trigger") || n.Contains("grip") || n.Contains("select")) && btn.isPressed)
                     return true;
             }
@@ -320,28 +334,42 @@ public class InteractorUniversalVR : MonoBehaviour
         return false;
     }
 
+    private void EnviarVibracionHapticaVR(float amplitud, float duracion)
+    {
+        InputDevice right = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
+        if (right.isValid)
+            right.SendHapticImpulse(0u, amplitud, duracion);
+
+        InputDevice left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
+        if (left.isValid)
+            left.SendHapticImpulse(0u, amplitud * 0.7f, duracion);
+    }
+
     private void EjecutarAccion(MonoBehaviour objetivo)
     {
         if (objetivo is InterruptorLuz sw)
         {
             sw.AlternarDesdeRayo();
+            EnviarVibracionHapticaVR(0.45f, 0.10f);
             Debug.Log($"[ÉXITO] Switch accionado: {sw.name}");
         }
         else if (objetivo is PuertaAutoCierre pt)
         {
             pt.AlternarPuerta();
+            EnviarVibracionHapticaVR(0.55f, 0.14f);
             Debug.Log($"[ÉXITO] Puerta accionada: {pt.name}");
         }
         else if (objetivo is CajaFusiblesVR cf)
         {
             cf.RepararFusibles(null);
+            EnviarVibracionHapticaVR(0.80f, 0.22f);
             Debug.Log($"[ÉXITO] Caja de fusibles accionada: {cf.name}");
         }
     }
 
     void OnGUI()
     {
-        if (XRSettings.isDeviceActive) return;
+        if (CiudadCameraLook.EsVisorVRRealActivo()) return;
 
         if (objetivoActual != null)
         {

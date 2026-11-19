@@ -18,7 +18,7 @@ public class TabletSistemaVR : MonoBehaviour
 
     [Header("2. Generador Automático de Anomalías")]
     public float segundosEntreAnomalias = 18f;
-    private float temporizadorAnomalias = 12f; // Primera anomalía a los 6 segundos de iniciar
+    private float temporizadorAnomalias = 12f;
     public List<ObjetoAnomalia> todasLasAnomalias = new List<ObjetoAnomalia>();
 
     [Header("3. Sonidos Opcionales de la Tablet")]
@@ -36,7 +36,7 @@ public class TabletSistemaVR : MonoBehaviour
     private Dictionary<string, Image> botonesCuartos = new Dictionary<string, Image>();
     private Dictionary<int, Image> botonesTipos = new Dictionary<int, Image>();
 
-    private string cuartoElegido = "Kitchen";
+    private string cuartoElegido = "LivingRoom";
     private int tipoElegido = 0;
     private int anomaliasCorregidas = 0;
     private bool fusiblesReparadosReciente = false;
@@ -46,16 +46,84 @@ public class TabletSistemaVR : MonoBehaviour
     private readonly Color colorVerdeSeleccionado = new Color(0.45f, 0.95f, 0.55f, 1f);
     private readonly Color colorBotonOscuro = new Color(0.12f, 0.14f, 0.18f, 0.95f);
 
+    private static readonly string[,] HabitacionesCasa = new string[,]
+    {
+        { "LivingRoom", "SALA" },
+        { "Kitchen",    "COCINA" },
+        { "Garage",     "GARAJE" },
+        { "Laundry",    "LAVANDERÍA" },
+        { "Bathroom",   "BAÑOS" },
+        { "Bedroom1",   "RECÁMARA 1" },
+        { "Bedroom2",   "RECÁMARA 2" },
+        { "Bedroom3",   "RECÁMARA 3" }
+    };
+
+    private static readonly string[] NombresTiposEspanol = new string[]
+    {
+        "CUADROS / PINTURA",
+        "DESPLAZAMIENTO",
+        "OBJETO DUPLICADO",
+        "HUMANO DEFORME",
+        "SOMBRA (OJOS BLANCOS)",
+        "SUSURROS (MONJE)",
+        "FALLO ELÉCTRICO",
+        "REFLEJO EN ESPEJO",
+        "CADÁVER",
+        "DESCONOCIDO"
+    };
+
+    public static string ObtenerNombreCuartoEspanol(string idCuarto)
+    {
+        if (string.IsNullOrEmpty(idCuarto)) return "SALA";
+        string c = idCuarto.Trim();
+        if (string.Equals(c, "Basement", StringComparison.OrdinalIgnoreCase))
+            return "GARAJE";
+        if (string.Equals(c, "Bedroom", StringComparison.OrdinalIgnoreCase))
+            return "RECÁMARA 1";
+
+        for (int i = 0; i < HabitacionesCasa.GetLength(0); i++)
+        {
+            if (string.Equals(HabitacionesCasa[i, 0], c, StringComparison.OrdinalIgnoreCase))
+                return HabitacionesCasa[i, 1];
+        }
+        return c.ToUpperInvariant();
+    }
+
+    public static string ObtenerNombreTipoEspanol(int indiceTipo)
+    {
+        if (indiceTipo >= 0 && indiceTipo < NombresTiposEspanol.Length)
+            return NombresTiposEspanol[indiceTipo];
+        return ((TipoAnomalia)indiceTipo).ToString().ToUpperInvariant();
+    }
+
+    public static string ObtenerNombreTipoEspanol(TipoAnomalia tipo)
+    {
+        return ObtenerNombreTipoEspanol((int)tipo);
+    }
+
+    private static bool EsRecamara(string cuarto)
+    {
+        if (string.IsNullOrEmpty(cuarto)) return false;
+        return cuarto.Trim().StartsWith("Bedroom", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool CoincideCuartoExacto(ObjetoAnomalia anomalia, string cuartoReporte)
+    {
+        if (anomalia == null) return false;
+        string cuartoAnom = ObjetoAnomalia.NormalizarCuartoPorPosicion(anomalia.transform.position, anomalia.nombreCuarto);
+        string rep = string.Equals(cuartoReporte, "Basement", StringComparison.OrdinalIgnoreCase) ? "Garage" : cuartoReporte;
+
+        return string.Equals(cuartoAnom, rep, StringComparison.OrdinalIgnoreCase);
+    }
+
     private void Awake()
     {
         Instancia = this;
 
-        // Si había un InteractorUniversalVR pegado por error a la Tablet, removerlo para que no robe los clics del gatillo
         InteractorUniversalVR interactorEnTablet = GetComponent<InteractorUniversalVR>();
         if (interactorEnTablet != null)
             Destroy(interactorEnTablet);
 
-        // Si quedaba el menú antiguo AnomalyTabletMenu, removerlo
         AnomalyTabletMenu menuAntiguo = GetComponentInChildren<AnomalyTabletMenu>(true);
         if (menuAntiguo != null)
             Destroy(menuAntiguo);
@@ -70,14 +138,23 @@ public class TabletSistemaVR : MonoBehaviour
         RefrescarListaAnomalias();
         ConstruirInterfazEnTablet();
         ConfigurarRayosUIMandos();
-        SeleccionarCuartoUI("Kitchen");
+        SeleccionarCuartoUI("LivingRoom");
         SeleccionarTipoUI(0);
     }
 
     public void RefrescarListaAnomalias()
     {
         todasLasAnomalias.Clear();
-        todasLasAnomalias.AddRange(FindObjectsByType<ObjetoAnomalia>(FindObjectsInactive.Include, FindObjectsSortMode.None));
+        todasLasAnomalias.AddRange(FindObjectsByType<ObjetoAnomalia>(FindObjectsInactive.Include));
+        for (int i = 0; i < todasLasAnomalias.Count; i++)
+        {
+            if (todasLasAnomalias[i] != null)
+            {
+                todasLasAnomalias[i].nombreCuarto = ObjetoAnomalia.NormalizarCuartoPorPosicion(
+                    todasLasAnomalias[i].transform.position,
+                    todasLasAnomalias[i].nombreCuarto);
+            }
+        }
     }
 
     private void AsegurarAudioTablet()
@@ -102,7 +179,6 @@ public class TabletSistemaVR : MonoBehaviour
 
     private void AjustarColliderTabletParaNoBloquearUI()
     {
-        // Desplazar ligeramente hacia abajo el BoxCollider 3D de la Tablet para que el rayo siempre toque primero el Canvas UI
         BoxCollider bc = GetComponent<BoxCollider>();
         if (bc != null)
         {
@@ -112,7 +188,7 @@ public class TabletSistemaVR : MonoBehaviour
 
     private void ConfigurarRayosUIMandos()
     {
-        foreach (var ray in FindObjectsByType<XRRayInteractor>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        foreach (var ray in FindObjectsByType<XRRayInteractor>(FindObjectsInactive.Include))
         {
             if (ray == null) continue;
             ray.enableUIInteraction = true;
@@ -125,7 +201,6 @@ public class TabletSistemaVR : MonoBehaviour
     {
         if (!VRPauseMenu.IsMenuOpen && horaActual < 6)
         {
-            // 1. Avanzar el reloj de la noche
             relojInterno += Time.deltaTime;
             if (relojInterno >= duracionHoraEnSegundos)
             {
@@ -134,7 +209,6 @@ public class TabletSistemaVR : MonoBehaviour
                 ActualizarRelojUI();
             }
 
-            // 2. Activar una anomalía aleatoria cada cierto tiempo
             temporizadorAnomalias += Time.deltaTime;
             if (temporizadorAnomalias >= segundosEntreAnomalias)
             {
@@ -142,7 +216,6 @@ public class TabletSistemaVR : MonoBehaviour
                 GenerarAnomaliaAleatoria();
             }
         }
-
     }
 
     private void OnDestroy()
@@ -162,13 +235,35 @@ public class TabletSistemaVR : MonoBehaviour
         List<ObjetoAnomalia> inactivas = todasLasAnomalias.FindAll(a =>
             a != null && !a.estaActiva && a.posiblesVariantes != null && a.posiblesVariantes.Count > 0);
 
-        if (inactivas.Count > 0)
+        if (inactivas.Count == 0) return;
+
+        Transform cam = Camera.main != null ? Camera.main.transform : transform;
+        List<ObjetoAnomalia> enLugaresCerrados = inactivas.FindAll(a =>
+            Vector3.Distance(cam.position, a.transform.position) > 3.2f ||
+            Vector3.Angle(cam.forward, (a.transform.position - cam.position).normalized) > 65f);
+
+        List<ObjetoAnomalia> pool = enLugaresCerrados.Count > 0 ? enLugaresCerrados : inactivas;
+        int indice = UnityEngine.Random.Range(0, pool.Count);
+        ObjetoAnomalia elegida = pool[indice];
+        elegida.ActivarAnomalia();
+
+        if (elegida.tipoActivoActual == TipoAnomalia.Unknown && elegida.GetComponent<PuertaAutoCierre>() != null)
         {
-            int indice = UnityEngine.Random.Range(0, inactivas.Count);
-            inactivas[indice].ActivarAnomalia();
-            ActualizarRelojUI();
-            Debug.Log($"[ANOMALÍA ACTIVADA] Cuarto: {inactivas[indice].nombreCuarto} | Tipo: {inactivas[indice].tipoActivoActual} | Objeto: {inactivas[indice].name}");
+            ObjetoAnomalia interna = pool.Find(a =>
+                a != elegida &&
+                !a.estaActiva &&
+                CoincideCuartoExacto(a, elegida.nombreCuarto) &&
+                a.GetComponent<PuertaAutoCierre>() == null);
+
+            if (interna != null)
+            {
+                interna.ActivarAnomalia();
+                Debug.Log($"[ANOMALÍA EN CUARTO ABIERTO POR UNKNOWN] Cuarto: {ObtenerNombreCuartoEspanol(interna.nombreCuarto)} | Tipo: {ObtenerNombreTipoEspanol(interna.tipoActivoActual)} | Objeto: {interna.name}");
+            }
         }
+
+        ActualizarRelojUI();
+        Debug.Log($"[ANOMALÍA ACTIVADA] Cuarto: {ObtenerNombreCuartoEspanol(elegida.nombreCuarto)} | Tipo: {ObtenerNombreTipoEspanol(elegida.tipoActivoActual)} | Objeto: {elegida.name}");
     }
 
     public void NotificarFusiblesReparados()
@@ -186,21 +281,34 @@ public class TabletSistemaVR : MonoBehaviour
     private void EnviarReporteAlGestor()
     {
         TipoAnomalia tipoBuscado = (TipoAnomalia)tipoElegido;
+        string cuartoEsp = ObtenerNombreCuartoEspanol(cuartoElegido);
+        string tipoEsp = ObtenerNombreTipoEspanol(tipoBuscado);
 
         if (todasLasAnomalias.Count == 0)
             RefrescarListaAnomalias();
 
-        // Buscar coincidencia exacta de Cuarto + Tipo de Anomalía activa
+        // 1. Buscar coincidencia exacta de Habitación + Tipo de Anomalía activa
         ObjetoAnomalia anomaliaEncontrada = todasLasAnomalias.Find(a =>
             a != null &&
             a.estaActiva &&
-            string.Equals(a.nombreCuarto?.Trim(), cuartoElegido, StringComparison.OrdinalIgnoreCase) &&
+            CoincideCuartoExacto(a, cuartoElegido) &&
             a.tipoActivoActual == tipoBuscado);
 
-        // Si el jugador ya subió la palanca de fusibles manualmente y luego reporta Basement + Electrical
+        // 2. Si el jugador seleccionó cualquiera de las 3 recámaras y acertó el tipo en otra recámara del piso 2, aceptarlo también
+        if (anomaliaEncontrada == null && EsRecamara(cuartoElegido))
+        {
+            anomaliaEncontrada = todasLasAnomalias.Find(a =>
+                a != null &&
+                a.estaActiva &&
+                EsRecamara(ObjetoAnomalia.NormalizarCuartoPorPosicion(a.transform.position, a.nombreCuarto)) &&
+                a.tipoActivoActual == tipoBuscado);
+        }
+
+        // 3. Si el jugador ya subió la palanca de fusibles en el Garaje y reporta GARAJE + FALLO ELÉCTRICO
         if (anomaliaEncontrada == null &&
             fusiblesReparadosReciente &&
-            string.Equals(cuartoElegido, "Basement", StringComparison.OrdinalIgnoreCase) &&
+            (string.Equals(cuartoElegido, "Garage", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(cuartoElegido, "Basement", StringComparison.OrdinalIgnoreCase)) &&
             tipoBuscado == TipoAnomalia.Electrical)
         {
             fusiblesReparadosReciente = false;
@@ -214,6 +322,7 @@ public class TabletSistemaVR : MonoBehaviour
 
         if (anomaliaEncontrada != null)
         {
+            string cuartoRealEsp = ObtenerNombreCuartoEspanol(anomaliaEncontrada.nombreCuarto);
             try
             {
                 anomaliaEncontrada.RestaurarNormalidad();
@@ -224,20 +333,19 @@ public class TabletSistemaVR : MonoBehaviour
             }
 
             anomaliasCorregidas++;
-            textoEstadoReporte.text = $"¡ANOMALÍA CORREGIDA! ({cuartoElegido} - {tipoBuscado})";
+            textoEstadoReporte.text = $"¡CORREGIDA! ({cuartoRealEsp} - {tipoEsp})";
             textoEstadoReporte.color = colorVerdeSeleccionado;
             if (audioFeedback && sonidoAcierto) audioFeedback.PlayOneShot(sonidoAcierto);
             EnviarHapticPulso(0.65f, 0.18f);
             ActualizarRelojUI();
-            Debug.Log($"[REPORTE EXITOSO] Se corrigió {anomaliaEncontrada.name} en {cuartoElegido} ({tipoBuscado}).");
+            Debug.Log($"[REPORTE EXITOSO] Se corrigió {anomaliaEncontrada.name} en {cuartoRealEsp} ({tipoEsp}).");
         }
         else
         {
-            // Verificar si hay alguna anomalía activa en ese cuarto pero de otro tipo para dar mejor diagnóstico
             ObjetoAnomalia otraEnMismoCuarto = todasLasAnomalias.Find(a =>
                 a != null &&
                 a.estaActiva &&
-                string.Equals(a.nombreCuarto?.Trim(), cuartoElegido, StringComparison.OrdinalIgnoreCase));
+                CoincideCuartoExacto(a, cuartoElegido));
 
             int totalActivas = ContarAnomaliasActivas();
             if (totalActivas == 0)
@@ -246,11 +354,11 @@ public class TabletSistemaVR : MonoBehaviour
             }
             else if (otraEnMismoCuarto != null)
             {
-                textoEstadoReporte.text = $"FALLO: En {cuartoElegido} no es de tipo {tipoBuscado}.";
+                textoEstadoReporte.text = $"FALLO: En {cuartoEsp} no es {tipoEsp}.";
             }
             else
             {
-                textoEstadoReporte.text = $"ERROR: Sin anomalía {tipoBuscado} en {cuartoElegido}.";
+                textoEstadoReporte.text = $"ERROR: Sin {tipoEsp} en {cuartoEsp}.";
             }
 
             textoEstadoReporte.color = new Color(1f, 0.35f, 0.35f, 1f);
@@ -284,7 +392,7 @@ public class TabletSistemaVR : MonoBehaviour
         string horaTexto = (horaActual == 0) ? "12:00 AM" : $"0{horaActual}:00 AM";
         if (horaActual >= 6)
         {
-            textoRelojHeader.text = "06:00 AM - ¡GANASTE!";
+            textoRelojHeader.text = "06:00 AM - ¡TURNO COMPLETADO!";
             textoRelojHeader.color = colorVerdeSeleccionado;
         }
         else
@@ -296,7 +404,7 @@ public class TabletSistemaVR : MonoBehaviour
     }
 
     // =========================================================================
-    // CONSTRUCCIÓN AUTOMÁTICA DE LA PANTALLA EN 'Pantalla de reportes'
+    // CONSTRUCCIÓN AUTOMÁTICA DE LA PANTALLA EN ESPAÑOL (8 HABITACIONES + 10 TIPOS)
     // =========================================================================
     private void ConstruirInterfazEnTablet()
     {
@@ -315,13 +423,12 @@ public class TabletSistemaVR : MonoBehaviour
         }
         else
         {
-            // Elevar el Canvas 3mm sobre la malla de la tablet para que el BoxCollider de agarre nunca bloquee los clics UI
             Vector3 lp = tabletCanvas.transform.localPosition;
             tabletCanvas.transform.localPosition = new Vector3(lp.x, Mathf.Max(lp.y, 0.003f), lp.z);
             tabletCanvas.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
         }
 
-        tabletCanvas.gameObject.layer = 5; // UI Layer
+        tabletCanvas.gameObject.layer = 5;
         tabletCanvas.renderMode = RenderMode.WorldSpace;
         tabletCanvas.worldCamera = Camera.main;
         tabletCanvas.sortingOrder = 100;
@@ -354,8 +461,8 @@ public class TabletSistemaVR : MonoBehaviour
         CreateImage(tabletCanvas.transform, "Fondo_Pantalla", canvasSize, Vector2.zero, new Color(0.04f, 0.05f, 0.07f, 0.98f)).raycastTarget = false;
 
         // 1. BARRA SUPERIOR (Reloj + Botón de Pausa)
-        float headerHeight = (portrait ? 80f : 58f) * uiScale;
-        float headerY = (designHeight * 0.5f - (portrait ? 40f : 29f)) * uiScale;
+        float headerHeight = (portrait ? 76f : 56f) * uiScale;
+        float headerY = (designHeight * 0.5f - (portrait ? 38f : 28f)) * uiScale;
         GameObject barraSuperior = CreateRect("Barra_Superior", tabletCanvas.transform,
             new Vector2(designWidth * uiScale, headerHeight), new Vector2(0f, headerY));
         CreateImage(barraSuperior.transform, "Bg_Header", new Vector2(designWidth * uiScale, headerHeight),
@@ -363,50 +470,45 @@ public class TabletSistemaVR : MonoBehaviour
 
         float relojX = portrait ? -150f : -170f;
         float pausaX = portrait ? 190f : 300f;
-        Vector2 relojSize = portrait ? new Vector2(340f, 60f) : new Vector2(420f, 48f);
-        Vector2 pausaSize = portrait ? new Vector2(240f, 56f) : new Vector2(220f, 44f);
-        int headerFontSize = Mathf.RoundToInt((portrait ? 30f : 22f) * uiScale);
+        Vector2 relojSize = portrait ? new Vector2(340f, 56f) : new Vector2(420f, 46f);
+        Vector2 pausaSize = portrait ? new Vector2(240f, 52f) : new Vector2(220f, 42f);
+        int headerFontSize = Mathf.RoundToInt((portrait ? 28f : 22f) * uiScale);
         textoRelojHeader = CreateText(barraSuperior.transform, "Reloj_Turno", "12:00 AM",
             new Vector2(relojX * uiScale, 0f), relojSize * uiScale, headerFontSize,
             TextAnchor.MiddleLeft, colorRosaNormal);
 
-        Button btnPausaTop = CreateButton(barraSuperior.transform, "Btn_Pausa_Header", "PAUSA [A]",
+        CreateButton(barraSuperior.transform, "Btn_Pausa_Header", "PAUSA [A]",
             new Vector2(pausaX * uiScale, 0f), pausaSize * uiScale,
             new Color(0.55f, 0.14f, 0.16f, 1f), Color.white,
-            Mathf.RoundToInt((portrait ? 26f : 18f) * uiScale), AlternarPausaEnTablet);
+            Mathf.RoundToInt((portrait ? 24f : 18f) * uiScale), AlternarPausaEnTablet);
 
-        // 2. PANEL DE REPORTE DE ANOMALÍAS
+        // 2. PANEL DE REPORTE DE ANOMALÍAS (8 Habitaciones Reales de la Casa)
         panelAnomalias = CreateRect("App_Reporte_Anomalias", tabletCanvas.transform, canvasSize, Vector2.zero);
 
-        float roomLabelY = portrait ? 435f : 210f;
-        float roomColumnSpacing = portrait ? 215f : 300f;
-        float roomButtonWidth = portrait ? 200f : 270f;
-        float roomButtonHeight = portrait ? 70f : 46f;
-        float roomRowSpacing = portrait ? 82f : 54f;
-        float roomFirstRowY = portrait ? 365f : 160f;
-        int roomFontSize = Mathf.RoundToInt((portrait ? 24f : 20f) * uiScale);
-        CreateText(panelAnomalias.transform, "Lbl_Cuartos", "1. SELECCIONA HABITACIÓN:",
-            new Vector2(0f, roomLabelY * uiScale), new Vector2((portrait ? 640f : 860f) * uiScale, 36f * uiScale),
-            Mathf.RoundToInt((portrait ? 24f : 21f) * uiScale), TextAnchor.MiddleCenter, Color.white);
+        float roomLabelY = portrait ? 442f : 212f;
+        CreateText(panelAnomalias.transform, "Lbl_Cuartos", "1. SELECCIONA HABITACIÓN DE LA CASA:",
+            new Vector2(0f, roomLabelY * uiScale), new Vector2((portrait ? 640f : 860f) * uiScale, 32f * uiScale),
+            Mathf.RoundToInt((portrait ? 22f : 20f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
-        string[,] cuartos = new string[,] {
-            { "Kitchen", "COCINA" },
-            { "LivingRoom", "SALA" },
-            { "Bedroom", "RECÁMARA" },
-            { "Bathroom", "BAÑO" },
-            { "Laundry", "LAVANDERÍA" },
-            { "Basement", "GARAJE / SÓT." }
-        };
+        int numCuartos = HabitacionesCasa.GetLength(0); // 8 habitaciones
+        int colsCuartos = portrait ? 2 : 4;
+        float roomColumnSpacing = portrait ? 315f : 212f;
+        float roomButtonWidth = portrait ? 298f : 202f;
+        float roomButtonHeight = portrait ? 52f : 44f;
+        float roomRowSpacing = portrait ? 60f : 52f;
+        float roomFirstRowY = portrait ? 395f : 162f;
+        int roomFontSize = Mathf.RoundToInt((portrait ? 21f : 18f) * uiScale);
 
-        for (int i = 0; i < 6; i++)
+        for (int i = 0; i < numCuartos; i++)
         {
-            int fila = i / 3;
-            int col = i % 3;
-            float posX = (col - 1) * roomColumnSpacing;
+            int fila = i / colsCuartos;
+            int col = i % colsCuartos;
+            float offsetCentro = (colsCuartos - 1) * 0.5f;
+            float posX = (col - offsetCentro) * roomColumnSpacing;
             float posY = roomFirstRowY - (fila * roomRowSpacing);
 
-            string idCuarto = cuartos[i, 0];
-            string nombreMostrar = cuartos[i, 1];
+            string idCuarto = HabitacionesCasa[i, 0];
+            string nombreMostrar = HabitacionesCasa[i, 1];
 
             Button bCuarto = CreateButton(panelAnomalias.transform, "Room_" + idCuarto, nombreMostrar,
                 new Vector2(posX * uiScale, posY * uiScale),
@@ -417,20 +519,17 @@ public class TabletSistemaVR : MonoBehaviour
             botonesCuartos[idCuarto] = bCuarto.GetComponent<Image>();
         }
 
-        float typeLabelY = portrait ? 210f : 42f;
-        float typeColumnX = portrait ? 160f : 215f;
-        float typeFirstRowY = portrait ? 145f : -1f;
-        float typeRowSpacing = portrait ? 74f : 42f;
-        Vector2 typeButtonSize = (portrait ? new Vector2(305f, 64f) : new Vector2(415f, 38f)) * uiScale;
-        int typeFontSize = Mathf.RoundToInt((portrait ? 26f : 20f) * uiScale);
-        CreateText(panelAnomalias.transform, "Lbl_Tipos", "2. TIPO DE ANOMALÍA:",
-            new Vector2(0f, typeLabelY * uiScale), new Vector2((portrait ? 640f : 860f) * uiScale, 36f * uiScale),
-            Mathf.RoundToInt((portrait ? 24f : 21f) * uiScale), TextAnchor.MiddleCenter, Color.white);
+        // 3. LOS 10 TIPOS DE ANOMALÍA EN ESPAÑOL
+        float typeLabelY = portrait ? 160f : 44f;
+        float typeColumnX = portrait ? 158f : 215f;
+        float typeFirstRowY = portrait ? 105f : 0f;
+        float typeRowSpacing = portrait ? 66f : 42f;
+        Vector2 typeButtonSize = (portrait ? new Vector2(302f, 56f) : new Vector2(415f, 38f)) * uiScale;
+        int typeFontSize = Mathf.RoundToInt((portrait ? 20f : 18f) * uiScale);
 
-        string[] nombresTipos = new string[] {
-            "Imagery", "Displacement", "Mimic", "Flawed", "Pure Form",
-            "Preacher", "Electrical", "Tulpa", "Corpse", "Unknown"
-        };
+        CreateText(panelAnomalias.transform, "Lbl_Tipos", "2. SELECCIONA TIPO DE ANOMALÍA:",
+            new Vector2(0f, typeLabelY * uiScale), new Vector2((portrait ? 640f : 860f) * uiScale, 32f * uiScale),
+            Mathf.RoundToInt((portrait ? 22f : 20f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
         for (int i = 0; i < 10; i++)
         {
@@ -440,7 +539,7 @@ public class TabletSistemaVR : MonoBehaviour
             float posX = (col == 0) ? -typeColumnX : typeColumnX;
             float posY = typeFirstRowY - (fila * typeRowSpacing);
 
-            Button bTipo = CreateButton(panelAnomalias.transform, "Type_" + nombresTipos[i], nombresTipos[i].ToUpper(),
+            Button bTipo = CreateButton(panelAnomalias.transform, "Type_" + i, NombresTiposEspanol[i],
                 new Vector2(posX * uiScale, posY * uiScale), typeButtonSize,
                 colorBotonOscuro, colorRosaNormal, typeFontSize,
                 () => SeleccionarTipoUI(indiceCopia));
@@ -448,20 +547,19 @@ public class TabletSistemaVR : MonoBehaviour
             botonesTipos[indiceCopia] = bTipo.GetComponent<Image>();
         }
 
-        float statusY = portrait ? -245f : -218f;
-        float reportY = portrait ? -335f : -269f;
-        Vector2 statusSize = (portrait ? new Vector2(640f, 45f) : new Vector2(850f, 32f)) * uiScale;
-        Vector2 reportSize = (portrait ? new Vector2(620f, 95f) : new Vector2(700f, 46f)) * uiScale;
+        float statusY = portrait ? -235f : -218f;
+        float reportY = portrait ? -330f : -269f;
+        Vector2 statusSize = (portrait ? new Vector2(640f, 44f) : new Vector2(850f, 32f)) * uiScale;
+        Vector2 reportSize = (portrait ? new Vector2(620f, 92f) : new Vector2(700f, 46f)) * uiScale;
         textoEstadoReporte = CreateText(panelAnomalias.transform, "Txt_Estado_Reporte", "Sistema listo para reportar.",
             new Vector2(0f, statusY * uiScale), statusSize,
-            Mathf.RoundToInt((portrait ? 25f : 17f) * uiScale), TextAnchor.MiddleCenter, Color.white);
+            Mathf.RoundToInt((portrait ? 22f : 17f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
-        CreateButton(panelAnomalias.transform, "Btn_Enviar_Reporte", "[ REPORTAR ANOMALÍA ]",
+        CreateButton(panelAnomalias.transform, "Btn_Enviar_Reporte", "[ ENVIAR REPORTE ]",
             new Vector2(0f, reportY * uiScale), reportSize,
             new Color(0.15f, 0.42f, 0.2f, 1f), Color.white,
-            Mathf.RoundToInt((portrait ? 34f : 22f) * uiScale),
+            Mathf.RoundToInt((portrait ? 32f : 22f) * uiScale),
             EnviarReporteAlGestor);
-
     }
 
     private void SeleccionarCuartoUI(string cuarto)
@@ -478,8 +576,11 @@ public class TabletSistemaVR : MonoBehaviour
         if (audioFeedback && sonidoClickUI) audioFeedback.PlayOneShot(sonidoClickUI);
         EnviarHapticPulso(0.25f, 0.05f);
 
-        textoEstadoReporte.text = $"Seleccionado: {cuartoElegido} - {(TipoAnomalia)tipoElegido}";
-        textoEstadoReporte.color = Color.white;
+        if (textoEstadoReporte != null)
+        {
+            textoEstadoReporte.text = $"Seleccionado: {ObtenerNombreCuartoEspanol(cuartoElegido)} - {ObtenerNombreTipoEspanol(tipoElegido)}";
+            textoEstadoReporte.color = Color.white;
+        }
     }
 
     private void SeleccionarTipoUI(int indiceTipo)
@@ -496,8 +597,11 @@ public class TabletSistemaVR : MonoBehaviour
         if (audioFeedback && sonidoClickUI) audioFeedback.PlayOneShot(sonidoClickUI);
         EnviarHapticPulso(0.25f, 0.05f);
 
-        textoEstadoReporte.text = $"Seleccionado: {cuartoElegido} - {(TipoAnomalia)tipoElegido}";
-        textoEstadoReporte.color = Color.white;
+        if (textoEstadoReporte != null)
+        {
+            textoEstadoReporte.text = $"Seleccionado: {ObtenerNombreCuartoEspanol(cuartoElegido)} - {ObtenerNombreTipoEspanol(tipoElegido)}";
+            textoEstadoReporte.color = Color.white;
+        }
     }
 
     public void AlternarPausaEnTablet()

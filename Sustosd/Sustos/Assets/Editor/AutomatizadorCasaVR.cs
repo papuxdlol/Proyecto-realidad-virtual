@@ -171,7 +171,7 @@ public class AutomatizadorCasaVR : EditorWindow
         Dictionary<Transform, string> anclas = ObtenerAnclasDeCuartos(todosLosHijos);
 
         // 1. Buscar todos los interruptores de luz de la casa
-        InterruptorLuz[] todosLosSwitches = Object.FindObjectsByType<InterruptorLuz>(FindObjectsSortMode.None);
+        InterruptorLuz[] todosLosSwitches = Object.FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include);
 
         // Configurar cada switch para que también pueda fallar individualmente (Electrical de un solo cuarto)
         int switchesIndividuales = 0;

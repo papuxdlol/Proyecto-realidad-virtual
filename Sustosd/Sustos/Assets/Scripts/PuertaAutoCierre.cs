@@ -8,28 +8,36 @@ using UnityEngine.XR.Interaction.Toolkit.Interactors;
 [DefaultExecutionOrder(-100)]
 public class PuertaAutoCierre : MonoBehaviour
 {
-    [Header("Configuración de Giro")]
+    [Header("Configuración de Giro y Auto-Cierre")]
     public float anguloAbierta = 90f;
-    public float velocidadGiro = 160f;
-    public float segundosParaCerrarse = 6f;
+    public float velocidadGiro = 145f;
+    public float velocidadGiroAnomalia = 48f;
+    public float segundosParaCerrarse = 5.5f;
+    public float delayAccion = 0.14f;
+    public float cooldownInteraccion = 0.55f;
 
-    [Header("Sonidos")]
+    [Header("Sonidos Reales de Puerta")]
     public AudioSource audioPuerta;
     public AudioClip sonidoAbrir;
     public AudioClip sonidoCerrar;
+    public AudioClip sonidoAbrirAnomalia;
     public AudioClip sonidoAzotar;
 
     [HideInInspector] public bool estaAbierta = false;
+    [HideInInspector] public bool abiertaPorAnomalia = false;
 
     private Vector3 puntoBisagraMundial;
     private Vector3 posCerradaMundial;
     private Quaternion rotCerradaMundial;
     private float anguloActual = 0f;
     private Coroutine rutinaAutoCierre;
+    private Coroutine rutinaDelayAccion;
     private XRSimpleInteractable interactable;
     private BoxCollider hitboxPositivo;
     private int ultimaInteraccionFrame = -1;
     private float ultimoTiempoInteraccion = -10f;
+    private bool pendienteSonidoCierre = false;
+    private bool cierreEsAzote = false;
 
     private static AudioClip clipPuertaProcedural;
 
@@ -52,9 +60,42 @@ public class PuertaAutoCierre : MonoBehaviour
         return false;
     }
 
+    public static float ObtenerAnguloAperturaOptimo(string nombreObjeto)
+    {
+        if (string.IsNullOrEmpty(nombreObjeto)) return 90f;
+        string n = nombreObjeto.Trim().ToLowerInvariant();
+
+        switch (n)
+        {
+            // Piso 1
+            case "door": return 90f;             // Entrada principal -> abre hacia el vestíbulo interior
+            case "closet_door": return 90f;      // Clóset vestíbulo hoja derecha -> abre hacia afuera al vestíbulo
+            case "closet_door_01": return -90f;  // Clóset vestíbulo hoja izquierda -> abre hacia afuera al vestíbulo
+            case "closet_door_02": return 90f;   // Clóset pasillo sala -> abre hacia afuera al pasillo
+            case "door_007": return 90f;         // Puerta Lavandería restaurada -> abre hacia adentro pegada al muro derecho
+            case "door_008": return 90f;         // Puerta interior Garaje -> abre hacia el pasillo sin chocar con escalera
+            case "door_009": return -90f;        // Puerta trasera Garaje -> abre hacia adentro del garaje sin chocar con macetas
+            case "garden_gate": return -90f;     // Puerta jardín hoja derecha -> abre hacia el patio trasero
+            case "garden_gate_01": return 90f;   // Puerta jardín hoja izquierda -> abre hacia el patio trasero
+
+            // Piso 2
+            case "door_001": return -90f;        // Recámara 2 (Frente) -> abre hacia adentro de la recámara
+            case "door_002": return -90f;        // Clóset Recámara 1 -> abre hacia la recámara sin chocar con muros
+            case "door_003": return -90f;        // Baño 1 Arriba -> abre hacia afuera al pasillo sin golpear el lavabo
+            case "door_004": return -90f;        // Recámara 1 (Oeste) -> abre hacia el descanso sin atravesar muro de escalera
+            case "door_005": return -90f;        // Baño 2 Arriba -> abre hacia adentro del baño
+            case "door_006": return 90f;         // Recámara 3 (Sur) -> abre hacia adentro de la recámara
+            case "closet_door_03": return 78f;   // Clóset Recámara 3 -> abre hacia la recámara deteniéndose antes de la cómoda
+        }
+
+        if (n.Contains("01") && (n.Contains("cabinet_door") || n.Contains("washbasin_door")))
+            return -90f;
+
+        return 90f;
+    }
+
     void Awake()
     {
-        // Si este script fue puesto por error en un clon de colisión invisible dentro de House_Colliders, desactivarlo
         if (EsObjetoDeHouseCollidersOInvisible(transform))
         {
             Collider col = GetComponent<Collider>();
@@ -80,20 +121,39 @@ public class PuertaAutoCierre : MonoBehaviour
         MeshRenderer mr = GetComponent<MeshRenderer>();
         Bounds b = mr != null ? mr.bounds : new Bounds(transform.position, new Vector3(0.9f, 2.1f, 0.1f));
 
-        // Tomamos el borde lateral más ancho como bisagra en espacio mundial
-        if (b.extents.x > b.extents.z)
-            puntoBisagraMundial = new Vector3(b.min.x, b.center.y, b.center.z);
-        else
-            puntoBisagraMundial = new Vector3(b.center.x, b.center.y, b.min.z);
+        string n = gameObject.name.Trim().ToLowerInvariant();
+        anguloAbierta = ObtenerAnguloAperturaOptimo(n);
 
-        // 1. Desactivar cualquier BoxCollider en el objeto con escala negativa (-95.79)
-        BoxCollider colliderDirecto = GetComponent<BoxCollider>();
-        if (colliderDirecto != null)
+        // En House.fbx todas las puertas (Door*, closet_door*) tienen su pivote real de Blender en transform.position.
+        // Solo garden_gate y garden_gate_01 tienen el origen en el centro geométrico de la malla.
+        Vector2 pos2D = new Vector2(transform.position.x, transform.position.z);
+        Vector2 center2D = new Vector2(b.center.x, b.center.z);
+        float anchoPuerta = Mathf.Max(b.size.x, b.size.z);
+
+        if (n == "garden_gate")
         {
-            colliderDirecto.enabled = false;
+            puntoBisagraMundial = new Vector3(b.max.x, b.center.y, b.center.z);
+        }
+        else if (n == "garden_gate_01")
+        {
+            puntoBisagraMundial = new Vector3(b.min.x, b.center.y, b.center.z);
+        }
+        else if (Vector2.Distance(pos2D, center2D) > anchoPuerta * 0.18f)
+        {
+            puntoBisagraMundial = new Vector3(transform.position.x, b.center.y, transform.position.z);
+        }
+        else
+        {
+            if (b.extents.x > b.extents.z)
+                puntoBisagraMundial = new Vector3(b.min.x, b.center.y, b.center.z);
+            else
+                puntoBisagraMundial = new Vector3(b.center.x, b.center.y, b.min.z);
         }
 
-        // 2. Crear hijo Hitbox_VR_Positivo con escala mundial (1, 1, 1)
+        BoxCollider colliderDirecto = GetComponent<BoxCollider>();
+        if (colliderDirecto != null)
+            colliderDirecto.enabled = false;
+
         Transform hijoHitbox = transform.Find("Hitbox_VR_Positivo");
         if (hijoHitbox == null)
         {
@@ -117,18 +177,16 @@ public class PuertaAutoCierre : MonoBehaviour
         if (hitboxPositivo == null)
             hitboxPositivo = hijoHitbox.gameObject.AddComponent<BoxCollider>();
 
-        // Asegurar grosor mínimo de 20cm para que sobresalga a ambos lados de cualquier marco/pared
         Vector3 tamanoMundial = new Vector3(
-            Mathf.Max(b.size.x, 0.20f),
+            Mathf.Max(b.size.x, 0.22f),
             Mathf.Max(b.size.y, 0.40f),
-            Mathf.Max(b.size.z, 0.20f)
+            Mathf.Max(b.size.z, 0.22f)
         );
         hitboxPositivo.isTrigger = false;
         hitboxPositivo.center = Vector3.zero;
         hitboxPositivo.size = tamanoMundial;
         hitboxPositivo.enabled = true;
 
-        // 3. Configurar XRSimpleInteractable y vincular el BoxCollider de escala positiva
         interactable = GetComponent<XRSimpleInteractable>();
         if (interactable == null)
             interactable = gameObject.AddComponent<XRSimpleInteractable>();
@@ -152,12 +210,12 @@ public class PuertaAutoCierre : MonoBehaviour
         if (houseColliders == null) return;
 
         Vector3 puertaCenter = hitboxPositivo.transform.position;
-        string miNombre = gameObject.name.ToLower();
+        string miNombre = gameObject.name.ToLowerInvariant();
 
         foreach (Collider col in houseColliders.GetComponentsInChildren<Collider>(true))
         {
             if (col == null) continue;
-            string colName = col.gameObject.name.ToLower();
+            string colName = col.gameObject.name.ToLowerInvariant();
 
             bool nombreDePuerta = (colName.StartsWith("door") || colName.StartsWith("closet_door")) && !colName.Contains("frame");
             if (nombreDePuerta || colName == miNombre)
@@ -187,7 +245,7 @@ public class PuertaAutoCierre : MonoBehaviour
         audioPuerta.playOnAwake = false;
         audioPuerta.spatialBlend = 1f;
         audioPuerta.minDistance = 0.8f;
-        audioPuerta.maxDistance = 12f;
+        audioPuerta.maxDistance = 14f;
 
         if (sonidoAbrir == null && audioPuerta.clip != null)
             sonidoAbrir = audioPuerta.clip;
@@ -196,6 +254,12 @@ public class PuertaAutoCierre : MonoBehaviour
             sonidoAbrir = ObtenerClipPuerta();
         if (sonidoCerrar == null)
             sonidoCerrar = sonidoAbrir;
+        if (sonidoAbrirAnomalia == null)
+            sonidoAbrirAnomalia = sonidoAbrir;
+
+        // Nunca usar el sonido de metal pipe falling
+        if (sonidoAzotar == null || sonidoAzotar.name.ToLowerInvariant().Contains("pipe"))
+            sonidoAzotar = sonidoCerrar;
     }
 
     public Vector3 ObtenerPosicionMundial()
@@ -251,20 +315,39 @@ public class PuertaAutoCierre : MonoBehaviour
     private void ProcesarInteraccion(IXRInteractor interactor)
     {
         if (interactor is XRBaseInputInteractor inputInteractor)
-            inputInteractor.SendHapticImpulse(0.5f, 0.12f);
+            inputInteractor.SendHapticImpulse(0.55f, 0.14f);
 
         AlternarPuerta();
     }
 
     public void AlternarPuerta()
     {
-        // Protección anti-doble disparo en el mismo frame (p. ej. OnMouseDown/XRI + InteractorUniversalVR a la vez)
         if (ultimaInteraccionFrame == Time.frameCount) return;
-        if (Time.unscaledTime - ultimoTiempoInteraccion < 0.30f) return;
+        if (Time.unscaledTime - ultimoTiempoInteraccion < cooldownInteraccion) return;
 
         ultimaInteraccionFrame = Time.frameCount;
         ultimoTiempoInteraccion = Time.unscaledTime;
 
+        if (Application.isPlaying && gameObject.activeInHierarchy && delayAccion > 0.01f)
+        {
+            if (rutinaDelayAccion != null) StopCoroutine(rutinaDelayAccion);
+            rutinaDelayAccion = StartCoroutine(RutinaAlternarConDelay());
+        }
+        else
+        {
+            EjecutarAlternanciaInmediata();
+        }
+    }
+
+    private IEnumerator RutinaAlternarConDelay()
+    {
+        yield return new WaitForSeconds(delayAccion);
+        EjecutarAlternanciaInmediata();
+        rutinaDelayAccion = null;
+    }
+
+    private void EjecutarAlternanciaInmediata()
+    {
         if (!estaAbierta) AbrirPuerta();
         else CerrarPuerta(false);
     }
@@ -273,13 +356,20 @@ public class PuertaAutoCierre : MonoBehaviour
     {
         if (estaAbierta) return;
         estaAbierta = true;
-        if (audioPuerta && sonidoAbrir) audioPuerta.PlayOneShot(sonidoAbrir);
+        abiertaPorAnomalia = false;
+        pendienteSonidoCierre = false;
+
+        if (audioPuerta != null && sonidoAbrir != null)
+        {
+            audioPuerta.Stop();
+            audioPuerta.pitch = Random.Range(0.95f, 1.04f);
+            audioPuerta.PlayOneShot(sonidoAbrir);
+        }
 
         if (rutinaAutoCierre != null) StopCoroutine(rutinaAutoCierre);
         rutinaAutoCierre = StartCoroutine(TemporizadorCierre());
     }
 
-    // Usado cuando una anomalía Unknown abre la puerta sola: permanece abierta para que el jugador la descubra
     public void AbrirPuertaPorAnomalia()
     {
         if (rutinaAutoCierre != null)
@@ -288,24 +378,35 @@ public class PuertaAutoCierre : MonoBehaviour
             rutinaAutoCierre = null;
         }
         estaAbierta = true;
-        if (audioPuerta && sonidoAbrir) audioPuerta.PlayOneShot(sonidoAbrir);
+        abiertaPorAnomalia = true;
+        pendienteSonidoCierre = false;
+
+        if (audioPuerta != null)
+        {
+            AudioClip clipAnomalo = sonidoAbrirAnomalia != null ? sonidoAbrirAnomalia : sonidoAbrir;
+            if (clipAnomalo != null)
+            {
+                audioPuerta.Stop();
+                audioPuerta.pitch = 0.92f;
+                audioPuerta.PlayOneShot(clipAnomalo);
+            }
+        }
     }
 
     public void CerrarPuerta(bool esAzoteAnomalia)
     {
         if (!estaAbierta && Mathf.Abs(anguloActual) < 0.1f) return;
         estaAbierta = false;
+        abiertaPorAnomalia = false;
+
         if (rutinaAutoCierre != null)
         {
             StopCoroutine(rutinaAutoCierre);
             rutinaAutoCierre = null;
         }
 
-        if (audioPuerta)
-        {
-            AudioClip clip = (esAzoteAnomalia && sonidoAzotar != null) ? sonidoAzotar : sonidoCerrar;
-            if (clip != null) audioPuerta.PlayOneShot(clip);
-        }
+        cierreEsAzote = esAzoteAnomalia;
+        pendienteSonidoCierre = true;
     }
 
     private IEnumerator TemporizadorCierre()
@@ -316,17 +417,41 @@ public class PuertaAutoCierre : MonoBehaviour
 
     void Update()
     {
-        // Animación determinista de giro desde el estado cerrado (sin acumular deriva de RotateAround)
         float objetivo = estaAbierta ? anguloAbierta : 0f;
+        float vel = (estaAbierta && abiertaPorAnomalia) ? velocidadGiroAnomalia : velocidadGiro;
+
         if (Mathf.Abs(anguloActual - objetivo) > 0.05f)
         {
-            anguloActual = Mathf.MoveTowards(anguloActual, objetivo, velocidadGiro * Time.deltaTime);
+            anguloActual = Mathf.MoveTowards(anguloActual, objetivo, vel * Time.deltaTime);
             AplicarAnguloDesdeCerrada(anguloActual);
+
+            if (!estaAbierta && pendienteSonidoCierre && Mathf.Abs(anguloActual) <= 5.0f)
+            {
+                pendienteSonidoCierre = false;
+                ReproducirSonidoCierre();
+            }
         }
         else if (!estaAbierta && anguloActual != 0f)
         {
             anguloActual = 0f;
             AplicarAnguloDesdeCerrada(0f);
+            if (pendienteSonidoCierre)
+            {
+                pendienteSonidoCierre = false;
+                ReproducirSonidoCierre();
+            }
+        }
+    }
+
+    private void ReproducirSonidoCierre()
+    {
+        if (audioPuerta == null) return;
+        AudioClip clip = sonidoCerrar != null ? sonidoCerrar : sonidoAbrir;
+        if (clip != null)
+        {
+            audioPuerta.Stop();
+            audioPuerta.pitch = Random.Range(0.96f, 1.04f);
+            audioPuerta.PlayOneShot(clip);
         }
     }
 
@@ -343,7 +468,7 @@ public class PuertaAutoCierre : MonoBehaviour
         if (clipPuertaProcedural == null)
         {
             int sampleRate = 22050;
-            int samples = sampleRate / 4; // 250ms
+            int samples = sampleRate / 4;
             float[] data = new float[samples];
             for (int i = 0; i < samples; i++)
             {
