@@ -4,7 +4,7 @@ using UnityEngine;
 [RequireComponent(typeof(AudioSource))]
 public sealed class SonidoAleatorioCiudad : MonoBehaviour
 {
-    private const float ProbabilidadPorSegundo = 0.0005f;
+    private const float ProbabilidadPorSegundo = 0.005f;
 
     [SerializeField] private AudioClip tikiTikiTikti;
     [SerializeField] private AudioClip enrique;

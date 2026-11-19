@@ -212,7 +212,7 @@ AudioListener:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1000}
-  m_Enabled: 0
+  m_Enabled: 1
 --- !u!114 &1004
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -225,6 +225,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6d5aa4c17e7f42b3a78e569a33c04f17, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  menuMusic: {fileID: 8300000, guid: e0ddd5477ecd6084780f41e8083c6c13, type: 3}
+  menuClick: {fileID: 8300000, guid: b9f8291204e1b8349ae74bbca45abdb2, type: 3}
   menuFont: {fileID: 12800000, guid: a260eaf87950b6747b75953a785f8bcd, type: 3}
 --- !u!114 &1005
 MonoBehaviour:

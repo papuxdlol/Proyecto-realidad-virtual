@@ -70,6 +70,8 @@ public sealed class HorrorMainMenu : MonoBehaviour
     private bool reportedMissingXrCamera;
     private string lastVrClockDigitalTime;
     private AudioSource menuAudioSource;
+    private Slider vrVolumeSlider;
+    private Sprite backgroundSprite;
 
     private void Awake()
     {
@@ -174,6 +176,7 @@ public sealed class HorrorMainMenu : MonoBehaviour
         }
 
         EnsureUiEventSystem();
+        EnsureDesktopResources();
 
         xrCamera.clearFlags = CameraClearFlags.SolidColor;
         xrCamera.backgroundColor = Color.black;
@@ -201,7 +204,13 @@ public sealed class HorrorMainMenu : MonoBehaviour
         scaler.dynamicPixelsPerUnit = 10f;
         scaler.referencePixelsPerUnit = 100f;
 
-        Image panel = CreateVrImage("Panel", canvasRect, canvasRect.sizeDelta, Vector2.zero, new Color(0.008f, 0.008f, 0.012f));
+        backgroundSprite = Sprite.Create(
+            backgroundTexture,
+            new Rect(0f, 0f, backgroundTexture.width, backgroundTexture.height),
+            new Vector2(0.5f, 0.5f));
+        Image panel = CreateVrImage("Panel", canvasRect, canvasRect.sizeDelta, Vector2.zero, Color.white);
+        panel.sprite = backgroundSprite;
+        panel.preserveAspect = false;
         panel.raycastTarget = false;
 
         vrMainContent = new GameObject("Contenido principal", typeof(RectTransform));
@@ -372,8 +381,40 @@ public sealed class HorrorMainMenu : MonoBehaviour
         CreateVrImage("Línea de sección", sectionRect, new Vector2(700f, 2f), new Vector2(0f, 125f), new Color(0.64f, 0.15f, 0.18f, 0.9f)).raycastTarget = false;
         vrSectionTitle = CreateVrText("Título de sección", sectionRect, string.Empty, new Vector2(0f, 78f), new Vector2(650f, 56f), 36, TextAnchor.MiddleCenter, FontStyle.Bold);
         vrSectionMessage = CreateVrText("Texto de sección", sectionRect, string.Empty, new Vector2(0f, -5f), new Vector2(650f, 86f), 24, TextAnchor.MiddleCenter, FontStyle.Normal);
+        vrVolumeSlider = CreateVrVolumeSlider(sectionRect);
         CreateVrButton("VOLVER", sectionRect, new Vector2(0f, -112f), CloseVrSection, true);
+        vrVolumeSlider.gameObject.SetActive(false);
         vrSectionContent.SetActive(false);
+    }
+
+    private Slider CreateVrVolumeSlider(Transform parent)
+    {
+        Image track = CreateVrImage("Barra de volumen", parent, new Vector2(520f, 24f), new Vector2(0f, -58f), new Color(0.18f, 0.19f, 0.21f, 1f));
+        RectTransform fillRect = new GameObject("Relleno de volumen", typeof(RectTransform)).GetComponent<RectTransform>();
+        fillRect.SetParent(track.transform, false);
+        fillRect.anchorMin = Vector2.zero;
+        fillRect.anchorMax = new Vector2(0f, 1f);
+        fillRect.offsetMin = Vector2.zero;
+        fillRect.offsetMax = Vector2.zero;
+        Image fill = fillRect.gameObject.AddComponent<Image>();
+        fill.color = new Color(0.64f, 0.15f, 0.18f, 1f);
+        fill.raycastTarget = false;
+
+        Image handle = CreateVrImage("Control de volumen", track.transform, new Vector2(32f, 40f), Vector2.zero, new Color(0.9f, 0.9f, 0.91f, 1f));
+        RectTransform handleRect = handle.rectTransform;
+        handleRect.anchorMin = new Vector2(0f, 0f);
+        handleRect.anchorMax = new Vector2(0f, 1f);
+
+        Slider slider = track.gameObject.AddComponent<Slider>();
+        slider.fillRect = fillRect;
+        slider.handleRect = handleRect;
+        slider.targetGraphic = handle;
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+        slider.value = AudioVolumeSettings.CurrentVolume;
+        slider.navigation = new Navigation { mode = Navigation.Mode.None };
+        slider.onValueChanged.AddListener(AudioVolumeSettings.SetVolume);
+        return slider;
     }
 
     private void CloseVrSection()
@@ -545,7 +586,7 @@ public sealed class HorrorMainMenu : MonoBehaviour
                 switch (section)
                 {
                     case MenuSection.Settings:
-                        vrStatusText.text = "Los ajustes de sonido estarán disponibles pronto.";
+                        vrStatusText.text = "Ajusta el volumen general.";
                         break;
                     case MenuSection.Anomalies:
                         vrStatusText.text = "El archivo sigue incompleto. Vuelve cuando haya más registros.";
@@ -565,7 +606,9 @@ public sealed class HorrorMainMenu : MonoBehaviour
                 {
                     case MenuSection.Settings:
                         vrSectionTitle.text = "OPCIONES";
-                        vrSectionMessage.text = "Los ajustes de sonido estarán disponibles pronto.";
+                        vrSectionMessage.text = "VOLUMEN GENERAL";
+                        vrVolumeSlider.value = AudioVolumeSettings.CurrentVolume;
+                        vrVolumeSlider.gameObject.SetActive(true);
                         break;
                     case MenuSection.Anomalies:
                         vrSectionTitle.text = "ANOMALÍAS";
@@ -669,7 +712,7 @@ public sealed class HorrorMainMenu : MonoBehaviour
         GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), overlayTexture);
 
         float width = Mathf.Min(530f * scale, Screen.width - 36f * scale);
-        float height = 208f * scale;
+        float height = (openSection == MenuSection.Settings ? 260f : 208f) * scale;
         Rect panel = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
         GUI.DrawTexture(panel, modalTexture);
         GUI.DrawTexture(new Rect(panel.x, panel.y, panel.width, 1f * scale), lineTexture);
@@ -680,7 +723,7 @@ public sealed class HorrorMainMenu : MonoBehaviour
         {
             case MenuSection.Settings:
                 heading = "OPCIONES";
-                message = "Los ajustes de sonido estarán disponibles pronto.";
+                message = "Ajusta el volumen general.";
                 break;
             case MenuSection.Anomalies:
                 heading = "ANOMALÍAS";
@@ -693,7 +736,22 @@ public sealed class HorrorMainMenu : MonoBehaviour
         }
 
         GUI.Label(new Rect(panel.x + 22f * scale, panel.y + 25f * scale, panel.width - 44f * scale, 38f * scale), heading, panelTitleStyle);
-        GUI.Label(new Rect(panel.x + 22f * scale, panel.y + 76f * scale, panel.width - 44f * scale, 64f * scale), message, panelTextStyle);
+        if (openSection == MenuSection.Settings)
+        {
+            GUI.Label(new Rect(panel.x + 22f * scale, panel.y + 72f * scale, panel.width - 44f * scale, 28f * scale), "VOLUMEN GENERAL", panelTextStyle);
+            Rect sliderRect = new Rect(panel.x + 34f * scale, panel.y + 112f * scale, panel.width - 68f * scale, 20f * scale);
+            float volume = GUI.HorizontalSlider(sliderRect, AudioVolumeSettings.CurrentVolume, 0f, 1f);
+            if (Mathf.Abs(volume - AudioVolumeSettings.CurrentVolume) > 0.001f)
+            {
+                AudioVolumeSettings.SetVolume(volume);
+            }
+            GUI.Label(new Rect(panel.x + 22f * scale, panel.y + 139f * scale, panel.width - 44f * scale, 24f * scale),
+                Mathf.RoundToInt(AudioVolumeSettings.CurrentVolume * 100f) + "%", panelTextStyle);
+        }
+        else
+        {
+            GUI.Label(new Rect(panel.x + 22f * scale, panel.y + 76f * scale, panel.width - 44f * scale, 64f * scale), message, panelTextStyle);
+        }
 
         float backWidth = 160f * scale;
         if (GUI.Button(new Rect(panel.x + 22f * scale, panel.y + panel.height - 54f * scale, backWidth, 34f * scale), "VOLVER", buttonStyle))
@@ -862,28 +920,87 @@ public sealed class HorrorMainMenu : MonoBehaviour
             wrapMode = TextureWrapMode.Clamp
         };
 
+        Color[] pixels = new Color[width * height];
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
             {
                 float u = (float)x / (width - 1);
                 float v = (float)y / (height - 1);
-                float distanceFromCenter = Mathf.Sqrt(Mathf.Pow((u - 0.5f) * 1.05f, 2f) + Mathf.Pow((v - 0.52f) * 0.92f, 2f));
-                float vignette = Mathf.Clamp01(1f - distanceFromCenter * 1.45f);
-                float scanline = (y % 3 == 0) ? 0.0015f : 0f;
-                float grain = Mathf.Sin((x + 1) * 12.9898f + (y + 1) * 78.233f) * 0.0015f;
-                float shade = 0.003f + vignette * 0.006f + scanline + grain;
-                Color color = new Color(shade, shade, shade * 1.04f, 1f);
-                texture.SetPixel(x, y, color);
+                float horizonGlow = Mathf.Exp(-Mathf.Pow((v - 0.27f) * 9f, 2f));
+                Color sky = Color.Lerp(new Color(0.012f, 0.016f, 0.022f), new Color(0.11f, 0.085f, 0.08f), horizonGlow * 0.5f);
+                float skyline = 0.12f
+                    + Mathf.Abs(Mathf.Sin(x * 0.071f + 0.8f)) * 0.09f
+                    + Mathf.Abs(Mathf.Sin(x * 0.027f + 2.2f)) * 0.12f;
+
+                if (v < skyline)
+                {
+                    sky = new Color(0.018f, 0.021f, 0.026f);
+                    int windowX = x % 19;
+                    int windowY = y % 17;
+                    if (windowX > 5 && windowX < 8 && windowY > 7 && windowY < 10 && (x * 7 + y * 13) % 11 < 3)
+                    {
+                        sky = new Color(0.16f, 0.105f, 0.065f);
+                    }
+                }
+
+                float vignette = Mathf.Clamp01(1f - Mathf.Abs(u - 0.5f) * 0.75f - Mathf.Abs(v - 0.5f) * 0.48f);
+                pixels[y * width + x] = Color.Lerp(new Color(0.006f, 0.008f, 0.012f), sky, vignette);
             }
         }
 
+        pixels = BlurPixels(pixels, width, height, 4);
+        texture.SetPixels(pixels);
         texture.Apply();
         return texture;
     }
 
+    private static Color[] BlurPixels(Color[] source, int width, int height, int radius)
+    {
+        Color[] horizontal = new Color[source.Length];
+        Color[] blurred = new Color[source.Length];
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                Color sum = Color.clear;
+                int samples = 0;
+                for (int offset = -radius; offset <= radius; offset++)
+                {
+                    int sampleX = Mathf.Clamp(x + offset, 0, width - 1);
+                    sum += source[y * width + sampleX];
+                    samples++;
+                }
+                horizontal[y * width + x] = sum / samples;
+            }
+        }
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                Color sum = Color.clear;
+                int samples = 0;
+                for (int offset = -radius; offset <= radius; offset++)
+                {
+                    int sampleY = Mathf.Clamp(y + offset, 0, height - 1);
+                    sum += horizontal[sampleY * width + x];
+                    samples++;
+                }
+                blurred[y * width + x] = sum / samples;
+            }
+        }
+
+        return blurred;
+    }
+
     private void OnDestroy()
     {
+        if (backgroundSprite != null)
+        {
+            Destroy(backgroundSprite);
+        }
         DestroyTexture(backgroundTexture);
         DestroyTexture(lineTexture);
         DestroyTexture(hoverTexture);

@@ -205,14 +205,14 @@ public sealed class VRPauseMenu : MonoBehaviour
         slider.targetGraphic = track;
         slider.minValue = 0f;
         slider.maxValue = 1f;
-        slider.value = AudioListener.volume;
+        slider.value = AudioVolumeSettings.CurrentVolume;
         slider.navigation = new Navigation { mode = Navigation.Mode.None };
         slider.onValueChanged.AddListener(SetVolume);
     }
 
     private void SetVolume(float volume)
     {
-        AudioListener.volume = volume;
+        AudioVolumeSettings.SetVolume(volume);
     }
 
     public void ToggleMenu()

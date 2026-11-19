@@ -9,6 +9,12 @@ public class SonidoPisadasVR : MonoBehaviour
     private Vector3 ultimaPosicion;
     private float distanciaRecorrida;
 
+    void Awake()
+    {
+        if (audioPisadas == null)
+            audioPisadas = GetComponent<AudioSource>();
+    }
+
     void Start()
     {
         ultimaPosicion = transform.position;
@@ -26,7 +32,7 @@ public class SonidoPisadasVR : MonoBehaviour
         if (distanciaRecorrida >= distanciaEntrePasos)
         {
             distanciaRecorrida = 0f;
-            if (clipsPasos.Length > 0 && audioPisadas != null)
+            if (clipsPasos != null && clipsPasos.Length > 0 && audioPisadas != null)
             {
                 AudioClip clip = clipsPasos[Random.Range(0, clipsPasos.Length)];
                 audioPisadas.pitch = Random.Range(0.9f, 1.1f); // Variación natural
