@@ -99,8 +99,16 @@ public class InterruptorLuz : MonoBehaviour
 
     void Update()
     {
-        // Si hay una anomalía Electrical en este cuarto, hacer que la luz parpadee sin explicación
-        if (parpadeoAnomaloActivo && EnergiaGeneralCasaActiva && luzDelCuarto != null)
+        // Coherencia eléctrica total: si hay apagón general, NINGÚN foco puede parpadear ni quedar encendido
+        if (!EnergiaGeneralCasaActiva)
+        {
+            if (luzDelCuarto != null && luzDelCuarto.enabled)
+                luzDelCuarto.enabled = false;
+            return;
+        }
+
+        // Si hay una anomalía Electrical en este cuarto (y sí hay corriente), hacer que la luz parpadee
+        if (parpadeoAnomaloActivo && luzDelCuarto != null)
         {
             if (Time.time >= proximoCambioParpadeo)
             {
@@ -171,7 +179,7 @@ public class InterruptorLuz : MonoBehaviour
         foreach (Light l in todasLasLuces)
         {
             if (l == null || l.type != LightType.Point) continue;
-            if (l.name.Contains("Fusibles") || l.name.Contains("Unknown") || l.name.Contains("Electrico") || l.name.Contains("Tulpa"))
+            if (l.name.Contains("Fusibles") || l.name.Contains("Unknown") || l.name.Contains("Electrico") || l.name.Contains("Tulpa") || l.name.Contains("Tablet") || l.name.Contains("Interior"))
                 continue;
             if (l.name.Contains("Luz_Real_Cuarto"))
             {
@@ -307,7 +315,7 @@ public class InterruptorLuz : MonoBehaviour
 
         hitboxPositivo.isTrigger = true;
         hitboxPositivo.center = Vector3.zero;
-        hitboxPositivo.size = new Vector3(0.38f, 0.38f, 0.38f);
+        hitboxPositivo.size = new Vector3(0.24f, 0.24f, 0.24f);
         hitboxPositivo.enabled = true;
 
         interactable = GetComponent<XRSimpleInteractable>();
@@ -384,6 +392,9 @@ public class InterruptorLuz : MonoBehaviour
 
     private void ProcesarInteraccion(IXRInteractor interactor)
     {
+        if (!InteractorUniversalVR.EstaDentroDeRangoYLineaDeVision(ObtenerPosicionMundial(), 1.90f, transform))
+            return;
+
         if (ultimaInteraccionFrame == Time.frameCount) return;
         if (Time.unscaledTime - ultimoTiempoInteraccion < cooldownInteraccion) return;
 

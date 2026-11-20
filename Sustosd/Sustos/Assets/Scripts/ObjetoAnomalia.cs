@@ -58,6 +58,18 @@ public class ObjetoAnomalia : MonoBehaviour
     [HideInInspector] public bool estaActiva = false;
     [HideInInspector] public TipoAnomalia tipoActivoActual;
 
+    public Vector3 ObtenerPosicionVisualActiva()
+    {
+        if (varianteActual != null && varianteActual.objetoExtraActivable != null && varianteActual.objetoExtraActivable.activeInHierarchy)
+        {
+            Renderer r = varianteActual.objetoExtraActivable.GetComponentInChildren<Renderer>();
+            return r != null ? r.bounds.center : varianteActual.objetoExtraActivable.transform.position;
+        }
+        if (miRenderer != null)
+            return miRenderer.bounds.center;
+        return transform.position;
+    }
+
     private VarianteAnomalia varianteActual;
     private Vector3 posOriginal;
     private Quaternion rotOriginal;
@@ -68,10 +80,12 @@ public class ObjetoAnomalia : MonoBehaviour
 
     private static Material materialElectricoFallback;
     private static Material materialImageryFallback;
+    private static Material materialCieloDiaVentana;
     private static Material materialSombraPureForm;
     private static Material materialOjosBlancosPureForm;
     private static AudioClip clipZumbidoElectrico;
     private static AudioClip clipSusurrosPreacher;
+    private static List<Bounds> cacheVentanasCasa;
 
     private struct PuntoAparicionCuarto
     {
@@ -95,9 +109,9 @@ public class ObjetoAnomalia : MonoBehaviour
         new PuntoAparicionCuarto
         {
             cuarto = "Kitchen",
-            posCentro = new Vector3(13.10f, 0.41f, -6.20f),
+            posCentro = new Vector3(14.55f, 0.41f, -6.30f),
             posRincon = new Vector3(11.80f, 0.41f, -9.20f),
-            posPared  = new Vector3(13.20f, 1.78f, -6.95f),
+            posPared  = new Vector3(14.55f, 1.75f, -6.30f),
             rotParedY = 180f
         },
         new PuntoAparicionCuarto
@@ -150,22 +164,113 @@ public class ObjetoAnomalia : MonoBehaviour
         }
     };
 
-    public static string NormalizarCuartoPorPosicion(Vector3 posMundial, string cuartoOriginal)
+    public static string NormalizarCuartoPorPosicion(Vector3 posMundial, string cuartoOriginal, string nombreObjeto = "")
     {
-        string c = string.IsNullOrEmpty(cuartoOriginal) ? "LivingRoom" : cuartoOriginal.Trim();
-        if (string.Equals(c, "Basement", System.StringComparison.OrdinalIgnoreCase))
-            return "Garage";
-
-        if (string.Equals(c, "Bedroom", System.StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrEmpty(nombreObjeto))
         {
-            if (posMundial.x > 17.4f)
-                return "Bedroom1"; // Recámara 1 (Principal Oeste + Clóset Vestidor)
-            if (posMundial.z >= -2.5f)
-                return "Bedroom2"; // Recámara 2 (Frente Norte)
-            return "Bedroom3";     // Recámara 3 (Sur Trasera)
+            string nl = nombreObjeto.Trim().ToLowerInvariant();
+
+            // 1. Mapeo exacto por nombre de Puertas y Switches para evitar que la cercanía a una pared los asigne al cuarto vecino
+            switch (nl)
+            {
+                case "door":
+                case "closet_door":
+                case "closet_door_01":
+                case "closet_door_02":
+                case "light_switch":
+                case "light_switch.001":
+                case "light_switch.003":
+                case "tv_03":
+                    return "LivingRoom";
+
+                case "garden_gate":
+                case "garden_gate_01":
+                case "light_switch.004":
+                case "light_switch.005":
+                    return "Kitchen";
+
+                case "door_007":
+                case "light_switch.006":
+                    return "Laundry";
+
+                case "door_008":
+                case "door_009":
+                case "light_switch.007":
+                case "light_switch.008":
+                case "caja_de_fusibles_vr":
+                    return "Garage";
+
+                case "door_003":
+                case "door_005":
+                case "shower_door":
+                case "light_switch.010":
+                case "light_switch.012":
+                case "anomalia_tulpa_espejobano":
+                    return "Bathroom";
+
+                case "door_002":
+                case "door_004":
+                case "light_switch.009":
+                case "tv_03.001":
+                    return "Bedroom1";
+
+                case "door_001":
+                case "light_switch.013":
+                case "light_switch.014":
+                case "tv_04":
+                    return "Bedroom2";
+
+                case "door_006":
+                case "closet_door_03":
+                case "light_switch.011":
+                    return "Bedroom3";
+            }
         }
 
-        return c;
+        // 2. Clasificación arquitectónica exacta por polígonos de muros (Piso 1 vs Piso 2)
+        if (posMundial.y < 3.15f)
+        {
+            // PISO 1
+            if (posMundial.x > 18.62f)
+                return "Garage";
+
+            if (posMundial.x >= 15.85f && posMundial.z < -5.50f)
+                return "Laundry";
+
+            if (posMundial.z >= -3.80f)
+                return "LivingRoom";
+
+            return "Kitchen";
+        }
+        else
+        {
+            // PISO 2
+            // Baño 1 Arriba (Regadera + Lavabo Washbasin_03.001 + Inodoro Toilet_01.001)
+            bool enBano1Arriba = posMundial.x >= 17.55f && posMundial.x <= 20.75f && posMundial.z < -5.12f;
+            // Baño 2 Arriba (Tina bathtub + Doble Lavabo Washbasin_07 + Inodoro Toilet_01.003)
+            bool enBano2Arriba = posMundial.x <= 14.48f && posMundial.z >= -4.42f && posMundial.z <= -0.55f;
+
+            if (enBano1Arriba || enBano2Arriba)
+                return "Bathroom";
+
+            if (posMundial.x > 17.45f)
+                return "Bedroom1"; // Recámara 1 (Principal Oeste + Clóset Vestidor)
+
+            if (posMundial.z > -2.50f)
+                return "Bedroom2"; // Recámara 2 (Frente Norte)
+
+            return "Bedroom3";     // Recámara 3 (Sur Trasera)
+        }
+    }
+
+    public static Vector3 ObtenerCentroDeHabitacion(string cuarto)
+    {
+        for (int i = 0; i < PuntosHabitaciones.Length; i++)
+        {
+            if (string.Equals(PuntosHabitaciones[i].cuarto, cuarto, System.StringComparison.OrdinalIgnoreCase))
+                return PuntosHabitaciones[i].posCentro;
+        }
+        return new Vector3(15.0f, 0.41f, -3.0f);
     }
 
     private static readonly string[] MensajesParedEspanol = new string[]
@@ -181,11 +286,12 @@ public class ObjetoAnomalia : MonoBehaviour
     {
         AutoRepararGeometriaYReferencias();
 
-        nombreCuarto = NormalizarCuartoPorPosicion(transform.position, nombreCuarto);
+        miRenderer = GetComponent<MeshRenderer>();
+        Vector3 posReal = miRenderer != null ? miRenderer.bounds.center : transform.position;
+        nombreCuarto = NormalizarCuartoPorPosicion(posReal, nombreCuarto, gameObject.name);
         posOriginal = transform.localPosition;
         rotOriginal = transform.localRotation;
         cuartoOriginalGuardado = nombreCuarto;
-        miRenderer = GetComponent<MeshRenderer>();
 
         foreach (var v in posiblesVariantes)
         {
@@ -250,28 +356,60 @@ public class ObjetoAnomalia : MonoBehaviour
         if (extraName.Contains("luzdedia_unknown"))
         {
             MeshRenderer parentRenderer = GetComponent<MeshRenderer>();
-            Vector3 lossy = transform.lossyScale;
-            float sx = Mathf.Abs(lossy.x) > 0.0001f ? 1f / Mathf.Abs(lossy.x) : 1f;
-            float sy = Mathf.Abs(lossy.y) > 0.0001f ? 1f / Mathf.Abs(lossy.y) : 1f;
-            float sz = Mathf.Abs(lossy.z) > 0.0001f ? 1f / Mathf.Abs(lossy.z) : 1f;
-
             if (parentRenderer != null)
             {
                 Bounds wb = parentRenderer.bounds;
-                extra.transform.position = wb.center;
+                bool orientadaEnX = wb.size.x < wb.size.z;
+                float tamX = orientadaEnX ? 0.03f : Mathf.Clamp(wb.size.x * 0.96f, 0.55f, 2.5f);
+                float tamY = Mathf.Clamp(wb.size.y * 0.95f, 0.75f, 2.3f);
+                float tamZ = !orientadaEnX ? 0.03f : Mathf.Clamp(wb.size.z * 0.96f, 0.55f, 2.5f);
+
+                // Empujar el cielo azul ligeramente hacia el EXTERIOR de la casa para que los marcos negros de la ventana queden al frente
+                Vector3 centroCasa = new Vector3(15.2f, wb.center.y, -4.5f);
+                Vector3 haciaAfuera = (wb.center - centroCasa);
+                haciaAfuera = orientadaEnX
+                    ? new Vector3(Mathf.Sign(haciaAfuera.x), 0f, 0f)
+                    : new Vector3(0f, 0f, Mathf.Sign(haciaAfuera.z));
+                if (haciaAfuera.sqrMagnitude < 0.01f) haciaAfuera = Vector3.forward;
+
+                Transform padreOrig = extra.transform.parent;
+                extra.transform.SetParent(null, true);
+                extra.transform.position = wb.center + haciaAfuera * 0.06f;
                 extra.transform.rotation = Quaternion.identity;
+                extra.transform.localScale = new Vector3(tamX, tamY, tamZ);
+                if (padreOrig != null)
+                    extra.transform.SetParent(padreOrig, true);
 
-                Vector3 worldSize = new Vector3(
-                    Mathf.Clamp(wb.size.x, 0.08f, 2.2f),
-                    Mathf.Clamp(wb.size.y, 0.8f, 2.2f),
-                    Mathf.Clamp(wb.size.z, 0.08f, 2.2f)
-                );
+                // Aplicar textura realista de cielo azul de día + horizonte verde (estilo Alternate Watch)
+                MeshRenderer mrExtra = extra.GetComponent<MeshRenderer>();
+                if (mrExtra != null)
+                    mrExtra.sharedMaterial = ObtenerMaterialCieloDiaRealista();
 
-                extra.transform.localScale = new Vector3(worldSize.x * sx, worldSize.z * sy, worldSize.y * sz);
-            }
-            else
-            {
-                extra.transform.localScale = new Vector3(1.1f * sx, 0.05f * sy, 1.4f * sz);
+                // Añadir luz solar cálida entrando solo por ESA ventana hacia el interior del cuarto
+                Transform luzSolT = extra.transform.Find("Luz_Sol_Ventana_Unknown");
+                Light luzSol;
+                if (luzSolT == null)
+                {
+                    GameObject lObj = new GameObject("Luz_Sol_Ventana_Unknown");
+                    lObj.transform.SetParent(extra.transform, true);
+                    luzSol = lObj.AddComponent<Light>();
+                }
+                else
+                {
+                    luzSol = luzSolT.GetComponent<Light>();
+                }
+
+                if (luzSol != null)
+                {
+                    luzSol.transform.position = wb.center - haciaAfuera * 0.45f;
+                    luzSol.type = LightType.Point;
+                    luzSol.color = new Color(1.0f, 0.96f, 0.86f, 1f);
+                    luzSol.intensity = 2.8f;
+                    luzSol.range = 5.4f;
+                    luzSol.shadows = LightShadows.None;
+                    luzSol.renderMode = LightRenderMode.ForcePixel;
+                    luzSol.enabled = true;
+                }
             }
         }
         else if (extraName.Contains("clonmimic"))
@@ -280,11 +418,28 @@ public class ObjetoAnomalia : MonoBehaviour
             MeshRenderer mrClon = extra.GetComponent<MeshRenderer>();
             if (mrOrig != null && mrClon != null)
             {
-                float dist = Vector3.Distance(mrOrig.bounds.center, mrClon.bounds.center);
-                if (dist > 1.2f || dist < 0.02f)
+                Bounds bOrig = mrOrig.bounds;
+                Vector3 centroCuarto = ObtenerCentroDeHabitacion(nombreCuarto);
+                Vector3 haciaCentro = new Vector3(centroCuarto.x - bOrig.center.x, 0f, centroCuarto.z - bOrig.center.z);
+                if (haciaCentro.sqrMagnitude < 0.01f) haciaCentro = Vector3.forward;
+                haciaCentro.Normalize();
+
+                Vector3 lateral = Vector3.Cross(Vector3.up, haciaCentro).normalized;
+                float separacion = Mathf.Clamp(Mathf.Max(bOrig.size.x, bOrig.size.z) + 0.14f, 0.28f, 0.52f);
+
+                // Probar dirección lateral o hacia el centro del cuarto que no choque con paredes (Anti-Clipping)
+                Vector3 mejorOffset = (lateral * separacion) + (haciaCentro * 0.08f);
+                if (Physics.Raycast(bOrig.center, mejorOffset.normalized, separacion + 0.12f, ~0, QueryTriggerInteraction.Ignore))
                 {
-                    extra.transform.position = transform.position + new Vector3(0.18f, 0f, 0.14f);
+                    mejorOffset = (-lateral * separacion) + (haciaCentro * 0.08f);
+                    if (Physics.Raycast(bOrig.center, mejorOffset.normalized, separacion + 0.12f, ~0, QueryTriggerInteraction.Ignore))
+                    {
+                        mejorOffset = haciaCentro * separacion;
+                    }
                 }
+
+                extra.transform.position = transform.position + mejorOffset;
+                extra.transform.rotation = transform.rotation * Quaternion.Euler(0f, 32f, 0f);
             }
         }
     }
@@ -300,10 +455,10 @@ public class ObjetoAnomalia : MonoBehaviour
 
         RectTransform rt = tmp.GetComponent<RectTransform>();
         if (rt != null)
-            rt.sizeDelta = new Vector2(2.8f, 0.8f);
+            rt.sizeDelta = new Vector2(1.55f, 0.45f);
 
         tmp.text = MensajesParedEspanol[0]; // "NADA VALE EL RIESGO"
-        tmp.fontSize = 2.0f;
+        tmp.fontSize = 1.15f;
         tmp.alignment = TextAlignmentOptions.Center;
         tmp.textWrappingMode = TextWrappingModes.NoWrap;
     }
@@ -464,12 +619,23 @@ public class ObjetoAnomalia : MonoBehaviour
         anim.mirarAlJugador = mirarJugador;
     }
 
-    public void ActivarAnomalia()
+    public void ActivarAnomalia(TipoAnomalia? tipoForzado = null)
     {
         if (estaActiva || posiblesVariantes.Count == 0) return;
 
-        int indiceAzar = Random.Range(0, posiblesVariantes.Count);
-        varianteActual = posiblesVariantes[indiceAzar];
+        if (tipoForzado.HasValue)
+        {
+            List<VarianteAnomalia> coincidentes = posiblesVariantes.FindAll(v => v != null && v.tipo == tipoForzado.Value);
+            varianteActual = coincidentes.Count > 0
+                ? coincidentes[Random.Range(0, coincidentes.Count)]
+                : posiblesVariantes[Random.Range(0, posiblesVariantes.Count)];
+        }
+        else
+        {
+            int indiceAzar = Random.Range(0, posiblesVariantes.Count);
+            varianteActual = posiblesVariantes[indiceAzar];
+        }
+
         tipoActivoActual = varianteActual.tipo;
         estaActiva = true;
 
@@ -623,22 +789,43 @@ public class ObjetoAnomalia : MonoBehaviour
             tmp.text = MensajesParedEspanol[Random.Range(0, MensajesParedEspanol.Length)];
         }
 
-        Vector3 origenBusqueda = elegido.posPared;
+        Vector3 origenBusqueda = new Vector3(elegido.posCentro.x, elegido.posCentro.y + 1.38f, elegido.posCentro.z);
         Vector3[] direcciones = { Vector3.forward, Vector3.back, Vector3.right, Vector3.left };
         RaycastHit mejorHit = default;
-        float menorDist = float.MaxValue;
+        float mejorPuntaje = float.MaxValue;
         bool encontroPared = false;
 
         foreach (Vector3 dir in direcciones)
         {
-            if (Physics.Raycast(origenBusqueda, dir, out RaycastHit hit, 3.2f, ~0, QueryTriggerInteraction.Ignore))
+            RaycastHit[] hits = Physics.RaycastAll(origenBusqueda, dir, 4.5f, ~0, QueryTriggerInteraction.Ignore);
+            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+            for (int h = 0; h < hits.Length; h++)
             {
-                if (Mathf.Abs(hit.normal.y) < 0.25f && hit.distance < menorDist)
+                RaycastHit hit = hits[h];
+                if (hit.collider == null || hit.collider.isTrigger) continue;
+                if (Mathf.Abs(hit.normal.y) > 0.2f) continue;
+
+                // Solo pegar el texto sobre muros arquitectónicos reales (House_Colliders), NUNCA sobre muebles, puertas ni ventanas
+                if (!EsMuroArquitectonicoReal(hit.collider.transform)) continue;
+                if (HayVentanaCercaDePunto(hit.point)) continue;
+
+                // Verificar que la pared sea suficientemente ancha (±0.65m a ambos lados) para que el texto nunca sobresalga en el aire
+                Vector3 tangente = Vector3.Cross(Vector3.up, hit.normal).normalized;
+                Vector3 puntoIzq = origenBusqueda + tangente * 0.65f;
+                Vector3 puntoDer = origenBusqueda - tangente * 0.65f;
+                bool anchoOk =
+                    TieneMuroEnMismoPlano(puntoIzq, dir, hit.distance, hit.normal) &&
+                    TieneMuroEnMismoPlano(puntoDer, dir, hit.distance, hit.normal);
+
+                float puntaje = hit.distance + (anchoOk ? 0f : 10f);
+                if (puntaje < mejorPuntaje)
                 {
-                    menorDist = hit.distance;
+                    mejorPuntaje = puntaje;
                     mejorHit = hit;
                     encontroPared = true;
                 }
+                break;
             }
         }
 
@@ -652,6 +839,122 @@ public class ObjetoAnomalia : MonoBehaviour
             transform.position = elegido.posPared;
             transform.rotation = Quaternion.Euler(0f, elegido.rotParedY, 0f);
         }
+    }
+
+    private static bool EsMuroArquitectonicoReal(Transform t)
+    {
+        Transform cur = t;
+        while (cur != null)
+        {
+            string n = cur.name.ToLowerInvariant();
+            if (n.Contains("collider_mueble") || n.Contains("door") || n.Contains("window") || n.Contains("hitbox"))
+                return false;
+            if (n == "house_colliders" || n.StartsWith("colliders"))
+                return true;
+            cur = cur.parent;
+        }
+        return false;
+    }
+
+    private static bool TieneMuroEnMismoPlano(Vector3 origen, Vector3 dir, float distEsperada, Vector3 normalEsperada)
+    {
+        RaycastHit[] hits = Physics.RaycastAll(origen, dir, distEsperada + 0.35f, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < hits.Length; i++)
+        {
+            if (hits[i].collider == null || hits[i].collider.isTrigger) continue;
+            if (!EsMuroArquitectonicoReal(hits[i].collider.transform)) continue;
+            if (Mathf.Abs(hits[i].distance - distEsperada) < 0.20f && Vector3.Dot(hits[i].normal, normalEsperada) > 0.92f)
+                return true;
+        }
+        return false;
+    }
+
+    private static bool HayVentanaCercaDePunto(Vector3 punto)
+    {
+        if (cacheVentanasCasa == null)
+        {
+            cacheVentanasCasa = new List<Bounds>();
+            GameObject house = GameObject.Find("House");
+            if (house != null)
+            {
+                foreach (MeshRenderer mr in house.GetComponentsInChildren<MeshRenderer>(true))
+                {
+                    if (mr == null) continue;
+                    string n = mr.name.ToLowerInvariant();
+                    if (n.StartsWith("window"))
+                        cacheVentanasCasa.Add(mr.bounds);
+                }
+            }
+        }
+
+        for (int i = 0; i < cacheVentanasCasa.Count; i++)
+        {
+            Bounds b = cacheVentanasCasa[i];
+            b.Expand(new Vector3(0.95f, 0.65f, 0.95f));
+            if (b.Contains(punto))
+                return true;
+        }
+        return false;
+    }
+
+    private static Material ObtenerMaterialCieloDiaRealista()
+    {
+        if (materialCieloDiaVentana != null) return materialCieloDiaVentana;
+
+        int w = 128;
+        int h = 128;
+        Texture2D tex = new Texture2D(w, h, TextureFormat.RGB24, false)
+        {
+            name = "Tex_CieloDia_Unknown_VR",
+            wrapMode = TextureWrapMode.Clamp
+        };
+
+        Color cieloArriba = new Color(0.24f, 0.58f, 0.95f);
+        Color cieloHorizonte = new Color(0.76f, 0.90f, 1.00f);
+        Color colinaVerde = new Color(0.32f, 0.62f, 0.24f);
+        Color colinaOscura = new Color(0.22f, 0.46f, 0.18f);
+
+        for (int y = 0; y < h; y++)
+        {
+            float v = (float)y / (h - 1);
+            for (int x = 0; x < w; x++)
+            {
+                float u = (float)x / (w - 1);
+                float alturaColina = 0.24f + Mathf.Sin(u * Mathf.PI * 1.4f + 0.4f) * 0.05f;
+
+                Color c;
+                if (v < alturaColina)
+                {
+                    float tCol = Mathf.Clamp01(v / Mathf.Max(0.01f, alturaColina));
+                    c = Color.Lerp(colinaOscura, colinaVerde, tCol);
+                }
+                else
+                {
+                    float tCielo = Mathf.Clamp01((v - alturaColina) / (1f - alturaColina));
+                    c = Color.Lerp(cieloHorizonte, cieloArriba, Mathf.Pow(tCielo, 0.72f));
+
+                    // Nubes suaves dispersas
+                    float nube = Mathf.PerlinNoise(u * 3.8f + 1.2f, v * 5.2f + 2.5f);
+                    if (v > 0.45f && nube > 0.62f)
+                    {
+                        float alphaNube = Mathf.Clamp01((nube - 0.62f) * 2.4f) * 0.65f;
+                        c = Color.Lerp(c, Color.white, alphaNube);
+                    }
+                }
+                tex.SetPixel(x, y, c);
+            }
+        }
+        tex.Apply();
+
+        Shader sh = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Texture") ?? Shader.Find("Standard");
+        materialCieloDiaVentana = new Material(sh)
+        {
+            name = "Mat_CieloDia_Ventana_Unknown",
+            color = Color.white
+        };
+        materialCieloDiaVentana.SetTexture("_BaseMap", tex);
+        materialCieloDiaVentana.mainTexture = tex;
+        return materialCieloDiaVentana;
     }
 
     private void AplicarTransformacionAnomala(VarianteAnomalia v)
@@ -692,12 +995,64 @@ public class ObjetoAnomalia : MonoBehaviour
 
         if (v.moverPosicion != Vector3.zero)
         {
-            Vector3 offsetMundial = new Vector3(
-                Mathf.Clamp(v.moverPosicion.x, -0.35f, 0.35f),
-                Mathf.Clamp(v.moverPosicion.y, -0.15f, 0.15f),
-                Mathf.Clamp(v.moverPosicion.z, -0.35f, 0.35f)
-            );
-            transform.position += offsetMundial;
+            // Calcular desplazamiento claramente visible (0.48m a 0.72m) hacia el centro despejado de la habitación
+            // para que nunca se mueva solo 2-7 cm ni atraviese muros o estantes (Anti-Clipping)
+            Vector3 centroCuarto = ObtenerCentroDeHabitacion(nombreCuarto);
+            Vector3 dirHaciaCentro = new Vector3(centroCuarto.x - centroVisual.x, 0f, centroCuarto.z - centroVisual.z);
+            if (dirHaciaCentro.sqrMagnitude < 0.01f)
+                dirHaciaCentro = new Vector3(v.moverPosicion.x, 0f, v.moverPosicion.z);
+            if (dirHaciaCentro.sqrMagnitude < 0.001f)
+                dirHaciaCentro = Vector3.forward;
+            dirHaciaCentro.Normalize();
+
+            float distObjetivo = Mathf.Clamp(new Vector2(v.moverPosicion.x, v.moverPosicion.z).magnitude * 3.2f, 0.48f, 0.72f);
+
+            // Verificar que no haya pared/obstáculo en esa dirección; si lo hay, invertir o usar la dirección hacia el centro del cuarto
+            Vector3[] candidatosDir = new Vector3[]
+            {
+                dirHaciaCentro,
+                Vector3.Cross(Vector3.up, dirHaciaCentro).normalized,
+                -Vector3.Cross(Vector3.up, dirHaciaCentro).normalized,
+                -dirHaciaCentro
+            };
+
+            Vector3 dirSegura = dirHaciaCentro;
+            float distSegura = distObjetivo;
+
+            foreach (Vector3 d in candidatosDir)
+            {
+                if (!Physics.Raycast(centroVisual, d, out RaycastHit hit, distObjetivo + 0.20f, ~0, QueryTriggerInteraction.Ignore))
+                {
+                    dirSegura = d;
+                    distSegura = distObjetivo;
+                    break;
+                }
+                else if (hit.distance > 0.35f)
+                {
+                    dirSegura = d;
+                    distSegura = hit.distance - 0.15f;
+                    break;
+                }
+            }
+
+            Vector3 nuevoDestino = transform.position + dirSegura * distSegura;
+
+            // Si es una caja, bote de pintura o bidón en un estante alto (ej. Garaje o Lavandería), bajarlo al suelo frente al estante
+            // y volcarlo ligeramente para que el jugador identifique al instante qué objeto se desplazó
+            string nLower = gameObject.name.ToLowerInvariant();
+            bool esObjetoDeEstante = nLower.StartsWith("box") || nLower.StartsWith("paint_pot") || nLower.StartsWith("petrol_can") || nLower.StartsWith("toolbox");
+            if (esObjetoDeEstante)
+            {
+                float pisoCuarto = centroVisual.y > 3.15f ? 3.74f : (nombreCuarto == "Garage" ? 0.16f : 0.41f);
+                float mitadAlto = miRenderer != null ? miRenderer.bounds.extents.y : 0.15f;
+                nuevoDestino.y = pisoCuarto + mitadAlto;
+                transform.position = nuevoDestino;
+                transform.RotateAround(miRenderer != null ? miRenderer.bounds.center : transform.position, dirSegura, 28f);
+            }
+            else
+            {
+                transform.position = nuevoDestino;
+            }
         }
     }
 

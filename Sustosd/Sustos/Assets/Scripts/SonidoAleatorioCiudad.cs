@@ -7,7 +7,6 @@ public sealed class SonidoAleatorioCiudad : MonoBehaviour
 {
     private const float ProbabilidadPorSegundo = 0.005f;
 
-    [SerializeField] private AudioClip tikiTikiTikti;
     [SerializeField] private AudioClip enrique;
     [SerializeField] private AudioClip cuffem;
 
@@ -25,10 +24,9 @@ public sealed class SonidoAleatorioCiudad : MonoBehaviour
         audioSource.playOnAwake = false;
         audioSource.loop = false;
 
-        List<AudioClip> validos = new List<AudioClip>(3);
-        if (tikiTikiTikti != null && !tikiTikiTikti.name.Contains("pipe")) validos.Add(tikiTikiTikti);
-        if (enrique != null && !enrique.name.Contains("pipe")) validos.Add(enrique);
-        if (cuffem != null && !cuffem.name.Contains("pipe")) validos.Add(cuffem);
+        List<AudioClip> validos = new List<AudioClip>(2);
+        if (enrique != null && !enrique.name.Contains("pipe") && !enrique.name.Contains("tiki")) validos.Add(enrique);
+        if (cuffem != null && !cuffem.name.Contains("pipe") && !cuffem.name.Contains("tiki")) validos.Add(cuffem);
 
         clips = validos.ToArray();
         if (clips.Length == 0)

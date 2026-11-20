@@ -107,18 +107,18 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
 
     private void AnimarPreacher(float t, bool enEspasmo)
     {
-        // Rezo/balanceo rítmico hacia adelante y atrás en el rincón + temblor constante
-        float rezoPitch = Mathf.Sin(t * 3.4f) * 11f;
-        float temblorX = Mathf.Sin(t * 28f) * 0.008f;
-        float temblorZ = Mathf.Cos(t * 31f) * 0.008f;
-
-        transform.localPosition = posBaseLocal + new Vector3(temblorX, Mathf.Abs(Mathf.Sin(t * 3.4f)) * 0.02f, temblorZ);
-
-        float resp = 1f + Mathf.Sin(t * 4.5f) * 0.03f;
+        // Monje inquietante y sigiloso: respiración muy lenta y leve balanceo fluido (sin sacudidas toscas)
+        float resp = 1f + Mathf.Sin(t * 1.15f) * 0.014f;
         transform.localScale = new Vector3(escalaBaseLocal.x * resp, escalaBaseLocal.y, escalaBaseLocal.z * resp);
 
-        Quaternion inclinacion = Quaternion.Euler(rezoPitch, Mathf.Sin(t * 1.9f) * 6f, Mathf.Cos(t * 2.3f) * 4f);
-        transform.localRotation = rotBaseLocal * inclinacion * (enEspasmo ? rotEspasmo : Quaternion.identity);
+        float derivaY = Mathf.Sin(t * 1.15f) * 0.006f;
+        transform.localPosition = posBaseLocal + new Vector3(0f, derivaY, 0f);
+
+        float rezoPitch = Mathf.Sin(t * 0.75f) * 2.2f;
+        float giroYaw   = Mathf.Sin(t * 0.45f) * 2.6f;
+        float ladeadoZ  = Mathf.Cos(t * 0.60f) * 1.4f;
+        Quaternion objetivo = rotBaseLocal * Quaternion.Euler(rezoPitch, giroYaw, ladeadoZ);
+        transform.localRotation = Quaternion.Slerp(transform.localRotation, objetivo, Time.deltaTime * 3.5f);
     }
 
     private void AnimarFlawed(float t, bool enEspasmo)

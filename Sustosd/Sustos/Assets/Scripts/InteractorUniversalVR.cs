@@ -13,8 +13,9 @@ public class InteractorUniversalVR : MonoBehaviour
 {
     public static InteractorUniversalVR Instancia;
 
-    [Header("Distancia para activar Switches, Puertas y Fusibles")]
-    public float distanciaMaxima = 3.2f;
+    [Header("Distancias Realistas de Interacción (Rango de Usuario)")]
+    public float distanciaMaximaPuertas = 2.05f;
+    public float distanciaMaximaSwitchesYMuebles = 1.80f;
 
     private MonoBehaviour objetivoActual;
     private string nombreObjetivo = "";
@@ -24,6 +25,7 @@ public class InteractorUniversalVR : MonoBehaviour
     private InterruptorLuz[] cacheSwitches;
     private CajaFusiblesVR[] cacheFusibles;
     private PuertaAutoCierre[] cachePuertas;
+    private InteractivoMuebleYElectronicoVR[] cacheMueblesYElectronicos;
     private XRRayInteractor[] cacheRayosXR;
 
     void Awake()
@@ -46,13 +48,18 @@ public class InteractorUniversalVR : MonoBehaviour
         CiudadCameraLook.DesactivarSimuladorSiHayVisorReal();
         AsegurarControlDeCamaraActivo();
 
-        // 2. Habilitar luces URP, noche oscura real, ventanas transparentes, vallas de límites y puerta faltante de Lavandería
+        // 2. Habilitar luces URP, noche oscura real, ventanas transparentes, vallas de límites, puerta faltante de Lavandería, cajones y electrónicos
         InterruptorLuz.HabilitarLucesAdicionalesEnURP();
         VentanasYLimitesVR.ConfigurarNocheOscuraReal();
         VentanasYLimitesVR.HacerVentanasTransparentes();
         VentanasYLimitesVR.ConstruirBarrerasLimitesMapa();
         VentanasYLimitesVR.RestaurarPuertaLavanderiaFaltante();
+        VentanasYLimitesVR.AsegurarCollidersMueblesTangibles();
         AsegurarPuertasYSwitchesEnEscena();
+
+        // 3. Asegurar sistema de tensión psicológica, latido, glitch de Tablet y paranoia ambiental (Fase 2)
+        if (FindAnyObjectByType<TensionYAmbienteVR>(FindObjectsInactive.Include) == null)
+            gameObject.AddComponent<TensionYAmbienteVR>();
     }
 
     void Start()
@@ -75,19 +82,77 @@ public class InteractorUniversalVR : MonoBehaviour
         }
     }
 
+    public static bool EstaDentroDeRangoYLineaDeVision(Vector3 posObjeto, float rangoMaximo = 2.05f, Transform objetivoTransform = null)
+    {
+        if (Camera.main == null) return true;
+        Transform cam = Camera.main.transform;
+
+        // 1. Separación estricta entre Piso 1 (Y < 3.15m) y Piso 2 (Y >= 3.15m)
+        bool jugadorEnPiso2 = cam.position.y >= 3.15f;
+        bool objetoEnPiso2 = posObjeto.y >= 3.15f;
+        if (jugadorEnPiso2 != objetoEnPiso2)
+            return false;
+
+        // 2. Diferencia vertical máxima realista (evita activar objetos del techo o de otro nivel al mirar hacia arriba)
+        if (Mathf.Abs(cam.position.y - posObjeto.y) > 1.35f)
+            return false;
+
+        // 3. Distancia máxima 3D realista respecto al jugador
+        float dist3D = Vector3.Distance(cam.position, posObjeto);
+        if (dist3D > rangoMaximo)
+            return false;
+
+        // 4. Línea de visión directa (cualquier muro, mueble o collider sólido entre la cámara y el objetivo bloquea la interacción)
+        return TieneLineaDeVisionDirecta(cam.position, posObjeto, objetivoTransform);
+    }
+
+    public static bool TieneLineaDeVisionDirecta(Vector3 origen, Vector3 destino, Transform objetivoTransform = null)
+    {
+        Vector3 dir = destino - origen;
+        float dist = dir.magnitude;
+        if (dist < 0.18f) return true;
+
+        Transform raizJugador = Camera.main != null ? Camera.main.transform.root : null;
+
+        RaycastHit[] hits = Physics.RaycastAll(origen, dir.normalized, dist - 0.08f, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider c = hits[i].collider;
+            if (c == null || c.isTrigger) continue;
+            if ( c is CharacterController ) continue;
+
+            Transform tc = c.transform;
+            if (raizJugador != null && (tc == raizJugador || tc.IsChildOf(raizJugador)))
+                continue;
+
+            if (objetivoTransform != null && (tc == objetivoTransform || tc.IsChildOf(objetivoTransform) || objetivoTransform.IsChildOf(tc)))
+                continue;
+
+            // Si el impacto es en el collider del mueble justo pegado a su propia puerta/cajón/TV (ej. cuerpo del refrigerador o lavabo), no auto-bloquear
+            if (tc.name == "Collider_Mueble_Solido" && Vector3.Distance(hits[i].point, destino) < 0.35f)
+                continue;
+
+            // Hay un muro, puerta cerrada o mueble sólido atravesado entre el jugador y el objeto
+            return false;
+        }
+
+        return true;
+    }
+
     public static void AsegurarPuertasYSwitchesEnEscena()
     {
         GameObject house = GameObject.Find("House");
-        if (house != null)
+        if (house == null) return;
+
+        foreach (Transform t in house.GetComponentsInChildren<Transform>(true))
         {
-            foreach (Transform t in house.GetComponentsInChildren<Transform>(true))
+            if (t == null) continue;
+            string n = t.name.ToLowerInvariant();
+            if (n.Contains("clonmimic") || n.Contains("hitbox_vr_positivo")) continue;
+
+            bool esPuertaPrincipal = (n.StartsWith("door") || n.StartsWith("closet_door") || n.StartsWith("garden_gate")) && !n.Contains("frame");
+            if (esPuertaPrincipal)
             {
-                if (t == null) continue;
-                string n = t.name.ToLowerInvariant();
-
-                bool esPuerta = (n.StartsWith("door") || n.StartsWith("closet_door")) && !n.Contains("frame") && !n.Contains("clonmimic");
-                if (!esPuerta) continue;
-
                 if (PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(t))
                 {
                     PuertaAutoCierre puertaInvalida = t.GetComponent<PuertaAutoCierre>();
@@ -112,6 +177,30 @@ public class InteractorUniversalVR : MonoBehaviour
                             v.puertaQueSeAbreSola = puerta;
                     }
                 }
+                continue;
+            }
+
+            // Configurar cajones, puertas de refrigerador, microondas, lavadoras, gabinetes, TVs y radio
+            bool esInteractivoMuebleOElectronico =
+                n.StartsWith("washbasin_drawer") ||
+                n.StartsWith("chest_drawers") ||
+                n.StartsWith("tool_cabinet") ||
+                n.StartsWith("refrigerator_door") ||
+                n.StartsWith("microwave_door") ||
+                n.StartsWith("washing_machine_d") ||
+                n.StartsWith("bathroom_cabinet_door") ||
+                n.StartsWith("washbasin_door") ||
+                n.StartsWith("shower_door") ||
+                n.StartsWith("tv_03") ||
+                n.StartsWith("tv_04") ||
+                n.StartsWith("radio_01");
+
+            if (esInteractivoMuebleOElectronico && !PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(t))
+            {
+                if (t.GetComponent<InteractivoMuebleYElectronicoVR>() == null)
+                {
+                    t.gameObject.AddComponent<InteractivoMuebleYElectronicoVR>();
+                }
             }
         }
     }
@@ -120,6 +209,7 @@ public class InteractorUniversalVR : MonoBehaviour
     {
         cacheSwitches = FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include);
         cacheFusibles = FindObjectsByType<CajaFusiblesVR>(FindObjectsInactive.Include);
+        cacheMueblesYElectronicos = FindObjectsByType<InteractivoMuebleYElectronicoVR>(FindObjectsInactive.Include);
 
         PuertaAutoCierre[] todasPuertas = FindObjectsByType<PuertaAutoCierre>(FindObjectsInactive.Include);
         List<PuertaAutoCierre> puertasVisibles = new List<PuertaAutoCierre>();
@@ -193,7 +283,7 @@ public class InteractorUniversalVR : MonoBehaviour
             foreach (var sw in cacheSwitches)
             {
                 if (sw == null || !sw.isActiveAndEnabled) continue;
-                EvaluarCandidato(sw, sw.ObtenerPosicionMundial(), cam, ref mejorPuntaje, "Switch de Luz");
+                EvaluarCandidato(sw, sw.ObtenerPosicionMundial(), cam, distanciaMaximaSwitchesYMuebles, ref mejorPuntaje, "Switch de Luz");
             }
         }
 
@@ -202,7 +292,7 @@ public class InteractorUniversalVR : MonoBehaviour
             foreach (var cf in cacheFusibles)
             {
                 if (cf == null || !cf.isActiveAndEnabled) continue;
-                EvaluarCandidato(cf, ObtenerCentroReal(cf.transform), cam, ref mejorPuntaje, "Caja de Fusibles");
+                EvaluarCandidato(cf, ObtenerCentroReal(cf.transform), cam, distanciaMaximaPuertas, ref mejorPuntaje, "Caja de Fusibles");
             }
         }
 
@@ -213,22 +303,31 @@ public class InteractorUniversalVR : MonoBehaviour
                 if (pt == null || !pt.isActiveAndEnabled) continue;
                 if (PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(pt.transform)) continue;
 
-                Vector3 puntoFrenteCam = cam.position + cam.forward * 1.1f;
-                Vector3 posCercana = pt.ObtenerPuntoMasCercano(puntoFrenteCam);
-                EvaluarCandidato(pt, posCercana, cam, ref mejorPuntaje, "Puerta");
-                EvaluarCandidato(pt, pt.ObtenerPosicionMundial(), cam, ref mejorPuntaje, "Puerta");
+                Vector3 posCercana = pt.ObtenerPuntoMasCercano(cam.position);
+                EvaluarCandidato(pt, posCercana, cam, distanciaMaximaPuertas, ref mejorPuntaje, "Puerta");
+                EvaluarCandidato(pt, pt.ObtenerPosicionMundial(), cam, distanciaMaximaPuertas, ref mejorPuntaje, "Puerta");
+            }
+        }
+
+        if (cacheMueblesYElectronicos != null)
+        {
+            foreach (var me in cacheMueblesYElectronicos)
+            {
+                if (me == null || !me.isActiveAndEnabled) continue;
+                Vector3 posCercana = me.ObtenerPuntoMasCercano(cam.position);
+                EvaluarCandidato(me, posCercana, cam, distanciaMaximaSwitchesYMuebles, ref mejorPuntaje, me.ObtenerEtiquetaHUD());
             }
         }
     }
 
-    private void EvaluarCandidato(MonoBehaviour script, Vector3 posObjeto, Transform cam, ref float mejorPuntaje, string etiqueta)
+    private void EvaluarCandidato(MonoBehaviour script, Vector3 posObjeto, Transform cam, float rangoMax, ref float mejorPuntaje, string etiqueta)
     {
+        if (!EstaDentroDeRangoYLineaDeVision(posObjeto, rangoMax, script != null ? script.transform : null))
+            return;
+
         float distCam = Vector3.Distance(cam.position, posObjeto);
-        if (distCam > distanciaMaxima) return;
 
-        if (Mathf.Abs(cam.position.y - posObjeto.y) > 1.85f) return;
-
-        // A) Verificar si alguno de los rayos de los mandos VR apunta hacia el objeto (Prioridad en Meta Quest 2)
+        // A) Verificar si alguno de los rayos de los mandos VR apunta hacia el objeto (dentro del rango realista)
         if (cacheRayosXR != null)
         {
             foreach (var ray in cacheRayosXR)
@@ -236,13 +335,13 @@ public class InteractorUniversalVR : MonoBehaviour
                 if (ray == null || !ray.isActiveAndEnabled) continue;
                 Transform rayOrigin = ray.rayOriginTransform != null ? ray.rayOriginTransform : ray.transform;
                 float distMano = Vector3.Distance(rayOrigin.position, posObjeto);
-                if (distMano > distanciaMaxima) continue;
+                if (distMano > rangoMax) continue;
 
                 Vector3 dirDesdeMano = (posObjeto - rayOrigin.position).normalized;
                 float anguloRayo = Vector3.Angle(rayOrigin.forward, dirDesdeMano);
-                if (anguloRayo < 28f)
+                if (anguloRayo < 22f)
                 {
-                    float puntajeRayo = distMano * 0.55f + (anguloRayo * 0.035f);
+                    float puntajeRayo = distMano * 0.6f + (anguloRayo * 0.04f);
                     if (puntajeRayo < mejorPuntaje)
                     {
                         mejorPuntaje = puntajeRayo;
@@ -253,12 +352,12 @@ public class InteractorUniversalVR : MonoBehaviour
             }
         }
 
-        // B) Verificar cono de visión de la cámara principal
+        // B) Verificar cono frontal de visión de la cámara principal (más estrecho para no seleccionar objetos periféricos lejanos)
         Vector3 dirHaciaObjeto = (posObjeto - cam.position).normalized;
         float anguloCam = Vector3.Angle(cam.forward, dirHaciaObjeto);
-        if (anguloCam < 42f)
+        if (anguloCam < 28f)
         {
-            float puntajeCam = distCam + (anguloCam * 0.045f);
+            float puntajeCam = distCam + (anguloCam * 0.05f);
             if (puntajeCam < mejorPuntaje)
             {
                 mejorPuntaje = puntajeCam;
@@ -364,6 +463,12 @@ public class InteractorUniversalVR : MonoBehaviour
             cf.RepararFusibles(null);
             EnviarVibracionHapticaVR(0.80f, 0.22f);
             Debug.Log($"[ÉXITO] Caja de fusibles accionada: {cf.name}");
+        }
+        else if (objetivo is InteractivoMuebleYElectronicoVR me)
+        {
+            me.AlternarEstado();
+            EnviarVibracionHapticaVR(0.45f, 0.10f);
+            Debug.Log($"[ÉXITO] Objeto accionado: {me.name}");
         }
     }
 

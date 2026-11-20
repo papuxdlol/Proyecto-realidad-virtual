@@ -404,4 +404,154 @@ public static class VentanasYLimitesVR
         bc.size = tamano;
         bc.enabled = true;
     }
+
+    /// <summary>
+    /// Agrega colliders sólidos (positivos y compatibles con CharacterController en Meta Quest 2)
+    /// a todos los muebles grandes de la casa (sofás, camas, mesas, encimeras, electrodomésticos,
+    /// armarios, sanitarios, etc.) que no están cubiertos por House_Colliders.
+    /// </summary>
+    public static int AsegurarCollidersMueblesTangibles()
+    {
+        GameObject house = GameObject.Find("House");
+        if (house == null) return 0;
+
+        int mueblesProcesados = 0;
+
+        foreach (Transform t in house.GetComponentsInChildren<Transform>(true))
+        {
+            if (t == null || !t.gameObject.activeInHierarchy) continue;
+            if (PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(t)) continue;
+
+            string n = t.name.ToLowerInvariant();
+            if (n.Contains("hitbox_vr") || n.Contains("collider_mueble") || n.Contains("clonmimic") || n.Contains("espejo_"))
+                continue;
+
+            if (!EsMuebleSolidoTangible(n))
+                continue;
+
+            MeshRenderer mr = t.GetComponent<MeshRenderer>();
+            if (mr == null || !mr.enabled) continue;
+
+            Bounds b = mr.bounds;
+            if (b.size.x < 0.22f || b.size.y < 0.20f || b.size.z < 0.22f)
+                continue;
+
+            // Si ya tiene un MeshCollider sólido válido (p.ej. horneado en Editor para sofás/cocina en L), respetarlo
+            MeshCollider mcExistente = t.GetComponent<MeshCollider>();
+            if (mcExistente != null && mcExistente.enabled && !mcExistente.isTrigger && mcExistente.sharedMesh != null)
+            {
+                mueblesProcesados++;
+                continue;
+            }
+
+            // Para sofás en L (Armchair) o encimeras de cocina en L (Kitchen), usar MeshCollider en Editor
+            // (o si la malla es legible) para no bloquear pasillos ni mesas de centro dentro de la "L".
+            bool esFormaEnL = n.StartsWith("armchair") || n.StartsWith("kitchen");
+            MeshFilter mf = t.GetComponent<MeshFilter>();
+            Vector3 ls = t.lossyScale;
+            bool escalaPositiva = ls.x > 0.0001f && ls.y > 0.0001f && ls.z > 0.0001f;
+
+            if (esFormaEnL && mf != null && mf.sharedMesh != null && escalaPositiva && (!Application.isPlaying || mf.sharedMesh.isReadable))
+            {
+                // Quitar BoxCollider hijo previo si existía
+                Transform hijoViejo = t.Find("Collider_Mueble_Solido");
+                if (hijoViejo != null)
+                {
+                    if (Application.isPlaying) Object.Destroy(hijoViejo.gameObject);
+                    else Object.DestroyImmediate(hijoViejo.gameObject);
+                }
+
+                MeshCollider mc = t.GetComponent<MeshCollider>();
+                if (mc == null) mc = t.gameObject.AddComponent<MeshCollider>();
+                mc.sharedMesh = mf.sharedMesh;
+                mc.convex = false;
+                mc.isTrigger = false;
+                mc.enabled = true;
+                mueblesProcesados++;
+                continue;
+            }
+
+            // Para el resto de muebles sólidos (camas, mesas, sillones, refrigerador, estufa, lavadoras,
+            // cómodas, roperos, muebles de baño, inodoros, tina, sillas, estantes), crear un BoxCollider hijo
+            // con escala positiva compensada (100% inmune a escalas negativas del FBX y ultra ligero en Quest 2).
+            Transform hijoCol = t.Find("Collider_Mueble_Solido");
+            if (hijoCol == null)
+            {
+                GameObject colObj = new GameObject("Collider_Mueble_Solido");
+                colObj.layer = 0; // Default (colisiona con CharacterController)
+                hijoCol = colObj.transform;
+                hijoCol.SetParent(t, false);
+            }
+
+            hijoCol.position = b.center;
+            hijoCol.rotation = Quaternion.identity;
+
+            float sx = Mathf.Abs(ls.x) > 0.0001f ? ls.x : 1f;
+            float sy = Mathf.Abs(ls.y) > 0.0001f ? ls.y : 1f;
+            float sz = Mathf.Abs(ls.z) > 0.0001f ? ls.z : 1f;
+            hijoCol.localScale = new Vector3(1f / sx, 1f / sy, 1f / sz);
+
+            BoxCollider bc = hijoCol.GetComponent<BoxCollider>();
+            if (bc == null) bc = hijoCol.gameObject.AddComponent<BoxCollider>();
+
+            // Ligero margen interno en XZ para no atorar al jugador en pasillos angostos ni tapar puertas/cajones del mismo mueble
+            float margenXZ = n.StartsWith("chair") ? 0.05f : 0.03f;
+            Vector3 tamano = new Vector3(
+                Mathf.Max(0.18f, b.size.x - margenXZ * 2f),
+                Mathf.Max(0.20f, b.size.y - 0.02f),
+                Mathf.Max(0.18f, b.size.z - margenXZ * 2f)
+            );
+
+            bc.isTrigger = false;
+            bc.center = Vector3.zero;
+            bc.size = tamano;
+            bc.enabled = true;
+            mueblesProcesados++;
+        }
+
+        return mueblesProcesados;
+    }
+
+    private static bool EsMuebleSolidoTangible(string n)
+    {
+        // Excluir partes móviles / puertas / cajones / tapas / manijas / accesorios pequeños
+        if (n.Contains("door") || n.Contains("drawer") || n.Contains("manija") ||
+            n.Contains("tapa") || n.Contains("paper") || n.Contains("lamp") ||
+            n.Contains("frame") || n.Contains("switch") || n.Contains("focus"))
+            return false;
+
+        // Sofás y sillones
+        if (n.StartsWith("armchair") || n.StartsWith("sofa") || n.StartsWith("couch"))
+            return true;
+
+        // Camas, mesas y sillas
+        if (n.StartsWith("bed_") || n == "bed" ||
+            n.StartsWith("table") || n.StartsWith("flower_table") || n.StartsWith("tool_table") ||
+            n.StartsWith("chair_"))
+            return true;
+
+        // Muebles grandes de almacenamiento (cómodas, roperos, alacenas, estanterías)
+        if (n.StartsWith("wardrobe") || n.StartsWith("chest_drawers") ||
+            n.StartsWith("cupboard") || n.StartsWith("shelving") ||
+            n.StartsWith("tool_cabinet") || n.StartsWith("bathroom_cabinet"))
+            return true;
+
+        // Cocina y electrodomésticos pesados
+        if (n == "kitchen" || n.StartsWith("kitchen_") ||
+            n.StartsWith("refrigerator") || n == "stove" ||
+            n == "washing_machine" || n == "washing_machine_02")
+            return true;
+
+        // Baño (tina, lavabos, inodoros, mamparas fijas de regadera, cestos de ropa)
+        if (n == "bathtub" || n.StartsWith("washbasin_0") ||
+            n.StartsWith("toilet_01") || n.StartsWith("glass_shower") ||
+            n == "basket" || n == "basket_01")
+            return true;
+
+        // Garaje (podadora)
+        if (n == "mower")
+            return true;
+
+        return false;
+    }
 }

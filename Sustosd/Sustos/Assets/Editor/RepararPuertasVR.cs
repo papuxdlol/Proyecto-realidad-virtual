@@ -13,7 +13,7 @@ using TMPro;
 [InitializeOnLoad]
 public class RepararPuertasVR : EditorWindow
 {
-    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v5.flag";
+    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v11.flag";
 
     static RepararPuertasVR()
     {
@@ -45,8 +45,8 @@ public class RepararPuertasVR : EditorWindow
         InterruptorLuz.HabilitarLucesAdicionalesEnURP();
         AssetDatabase.ImportAsset("Assets/Settings/Project Configuration/Performance URP Config.asset", ImportAssetOptions.ForceUpdate);
         AssetDatabase.ImportAsset("Assets/Settings/Project Configuration/Quality URP Config.asset", ImportAssetOptions.ForceUpdate);
-        AssetDatabase.ImportAsset("Assets/Model/Props/dark-female-apparition-3d-model/source/dark+female+apparition+3d+model.glb", ImportAssetOptions.ForceUpdate);
-        AssetDatabase.ImportAsset("Assets/Model/Props/horror-character/source/model.glb", ImportAssetOptions.ForceUpdate);
+        AssetDatabase.ImportAsset("Assets/Model/Props/dark-female-apparition-3d-model/source/PureForm_Model.obj", ImportAssetOptions.ForceUpdate);
+        AssetDatabase.ImportAsset("Assets/Model/Props/horror-character/source/Preacher_Model.obj", ImportAssetOptions.ForceUpdate);
 
         // Asegurar DecompressOnLoad en los 3 audios de pisadas para recorte instantáneo sin delay
         AsegurarAudioPisadasDecompressOnLoad();
@@ -58,6 +58,7 @@ public class RepararPuertasVR : EditorWindow
         // Restaurar la puerta faltante de Lavandería (Door_007) antes de escanear las puertas
         VentanasYLimitesVR.RestaurarPuertaLavanderiaFaltante();
         VentanasYLimitesVR.ConfigurarNocheOscuraReal();
+        VentanasYLimitesVR.AsegurarCollidersMueblesTangibles();
 
         Transform[] todos = Object.FindObjectsByType<Transform>(FindObjectsInactive.Include);
 
@@ -157,7 +158,7 @@ public class RepararPuertasVR : EditorWindow
                 if (esSwitch)
                 {
                     bcPositivo.isTrigger = true;
-                    bcPositivo.size = new Vector3(0.38f, 0.38f, 0.38f);
+                    bcPositivo.size = new Vector3(0.24f, 0.24f, 0.24f);
                 }
                 else
                 {
@@ -256,9 +257,24 @@ public class RepararPuertasVR : EditorWindow
         // 5. Reemplazar los 5 Placeholders de Entidades por sus Modelos 3D Reales y Animarlos + Espejo Tulpa
         int entidadesModeladas = ActualizarModelos3DDeEntidades();
 
-        // 6. Hacer ventanas transparentes y construir barreras exteriores del mapa
+        // 6. Hacer ventanas transparentes, construir barreras exteriores, configurar cajones/electrónicos y normalizar cuartos de anomalías
         int ventanasTransparentes = VentanasYLimitesVR.HacerVentanasTransparentes();
         VentanasYLimitesVR.ConstruirBarrerasLimitesMapa();
+        InteractorUniversalVR.AsegurarPuertasYSwitchesEnEscena();
+
+        foreach (ObjetoAnomalia anom in Object.FindObjectsByType<ObjetoAnomalia>(FindObjectsInactive.Include))
+        {
+            if (anom == null) continue;
+            MeshRenderer mrAnom = anom.GetComponent<MeshRenderer>();
+            Vector3 posAnom = mrAnom != null ? mrAnom.bounds.center : anom.transform.position;
+            string cuartoReal = ObjetoAnomalia.NormalizarCuartoPorPosicion(posAnom, anom.nombreCuarto, anom.gameObject.name);
+            if (anom.nombreCuarto != cuartoReal)
+            {
+                Undo.RecordObject(anom, "Normalizar Cuarto Anomalia");
+                anom.nombreCuarto = cuartoReal;
+                EditorUtility.SetDirty(anom);
+            }
+        }
 
         // 7. Configurar SonidoPisadasVR con los 3 clips de pasos (incluyendo soumages-walking-on-wood) y sin delay
         SonidoPisadasVR pisadas = Object.FindAnyObjectByType<SonidoPisadasVR>(FindObjectsInactive.Include);
@@ -285,6 +301,39 @@ public class RepararPuertasVR : EditorWindow
             camLook.gameObject.SetActive(true);
             camLook.enabled = true;
             EditorUtility.SetDirty(camLook);
+        }
+
+        // 9. Asignar automáticamente audios sintetizados y ambientales de Fase 1 y Fase 2 a Tablet y Tensión VR
+        TabletSistemaVR tablet = Object.FindAnyObjectByType<TabletSistemaVR>(FindObjectsInactive.Include);
+        if (tablet != null)
+        {
+            Undo.RecordObject(tablet, "Asignar Audios Fase 1 y 2 Tablet");
+            AudioClip clipProc = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_tablet_procesando.wav");
+            AudioClip clipGlitch = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_glitch_tablet.wav");
+            if (clipProc != null) tablet.sonidoProcesando = clipProc;
+            if (clipGlitch != null) tablet.sonidoGlitch = clipGlitch;
+            EditorUtility.SetDirty(tablet);
+        }
+
+        TensionYAmbienteVR tension = Object.FindAnyObjectByType<TensionYAmbienteVR>(FindObjectsInactive.Include);
+        if (tension == null)
+        {
+            InteractorUniversalVR inter = Object.FindAnyObjectByType<InteractorUniversalVR>(FindObjectsInactive.Include);
+            if (inter != null)
+                tension = Undo.AddComponent<TensionYAmbienteVR>(inter.gameObject);
+        }
+        if (tension != null)
+        {
+            Undo.RecordObject(tension, "Asignar Audios Tension y Paranoia VR");
+            AudioClip clipLatido = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_latido_corazon.wav");
+            AudioClip clipViento = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-wind-ambience-14720.mp3");
+            AudioClip clipCrujido = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-squeaky-bathroom-door-102756.mp3");
+            AudioClip clipGolpe = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/soumages-walking-on-wood-363349.mp3");
+            if (clipLatido != null) tension.clipLatidoCorazon = clipLatido;
+            if (clipViento != null) tension.clipVientoVentana = clipViento;
+            if (clipCrujido != null) tension.clipCrujidoMadera = clipCrujido;
+            if (clipGolpe != null) tension.clipGolpeMadera = clipGolpe;
+            EditorUtility.SetDirty(tension);
         }
 
         Scene activeScene = SceneManager.GetActiveScene();
@@ -338,13 +387,12 @@ public class RepararPuertasVR : EditorWindow
     private static int ActualizarModelos3DDeEntidades()
     {
         int contador = 0;
-        AudioClip clipHorrorLoop = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/horrormememusic.mp3");
         AudioClip clipPasosMadera = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/soumages-walking-on-wood-363349.mp3");
 
-        // 1. PURE FORM -> dark-female-apparition-3d-model
+        // 1. PURE FORM -> dark-female-apparition (OBJ nativo optimizado para VR)
         if (ReemplazarVisualEntidad(
             "Anomalia_PureForm_Sala",
-            "Assets/Model/Props/dark-female-apparition-3d-model/source/dark+female+apparition+3d+model.glb",
+            "Assets/Model/Props/dark-female-apparition-3d-model/source/PureForm_Model.obj",
             "Assets/Model/Props/dark-female-apparition-3d-model/textures/tripo_image_2acc1ccd-55f9-4be8-a988-c49b100357ff_0_1.jpeg",
             "Assets/Model/Props/dark-female-apparition-3d-model/textures/tripo_image_2acc1ccd-55f9-4be8-a988-c49b100357ff_2_0.jpeg",
             TipoAnomalia.PureForm,
@@ -355,16 +403,16 @@ public class RepararPuertasVR : EditorWindow
             contador++;
         }
 
-        // 2. PREACHER -> horror-character
+        // 2. PREACHER (MONJE) -> horror-character (OBJ nativo optimizado para VR, con susurros de ObjetoAnomalia)
         if (ReemplazarVisualEntidad(
             "Anomalia_Preacher_Closet",
-            "Assets/Model/Props/horror-character/source/model.glb",
+            "Assets/Model/Props/horror-character/source/Preacher_Model.obj",
             "Assets/Model/Props/horror-character/textures/gltf_embedded_0.jpeg",
             null,
             TipoAnomalia.Preacher,
             alturaDeseada: 1.78f,
             acostadoEnSuelo: false,
-            clipAudio: clipHorrorLoop))
+            clipAudio: null))
         {
             contador++;
         }
@@ -487,8 +535,8 @@ public class RepararPuertasVR : EditorWindow
             };
             mat.SetTexture("_BaseMap", texBase);
             mat.mainTexture = texBase;
-            mat.SetColor("_BaseColor", Color.white);
-            mat.SetFloat("_Smoothness", 0.25f);
+            mat.SetColor("_BaseColor", tipo == TipoAnomalia.Corpse ? new Color(0.55f, 0.50f, 0.50f, 1f) : Color.white);
+            mat.SetFloat("_Smoothness", tipo == TipoAnomalia.Corpse ? 0.35f : 0.25f);
             if (texNorm != null)
                 mat.SetTexture("_BumpMap", texNorm);
 
@@ -561,6 +609,22 @@ public class RepararPuertasVR : EditorWindow
                 bInicial = renderers[0].bounds;
                 for (int i = 1; i < renderers.Length; i++)
                     bInicial.Encapsulate(renderers[i].bounds);
+            }
+            else if (!acostado && bInicial.size.y < Mathf.Max(bInicial.size.x, bInicial.size.z) * 0.85f)
+            {
+                // Si una entidad de pie (ej. Tulpa FBX) viene exportada acostada en X o Z, enderezarla automáticamente
+                modelo.localRotation = Quaternion.Euler(-90f, 0f, 0f);
+                bInicial = renderers[0].bounds;
+                for (int i = 1; i < renderers.Length; i++)
+                    bInicial.Encapsulate(renderers[i].bounds);
+
+                if (bInicial.size.y < Mathf.Max(bInicial.size.x, bInicial.size.z) * 0.85f)
+                {
+                    modelo.localRotation = Quaternion.Euler(0f, 0f, 90f);
+                    bInicial = renderers[0].bounds;
+                    for (int i = 1; i < renderers.Length; i++)
+                        bInicial.Encapsulate(renderers[i].bounds);
+                }
             }
 
             float maxDim = acostado

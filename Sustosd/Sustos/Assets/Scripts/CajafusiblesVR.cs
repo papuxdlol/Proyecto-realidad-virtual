@@ -124,6 +124,14 @@ public class CajaFusiblesVR : MonoBehaviour
         {
             energiaGeneralActiva = false;
             InterruptorLuz.EnergiaGeneralCasaActiva = false;
+            InteractivoMuebleYElectronicoVR.NotificarCambioEnergiaGeneral(false);
+
+            InterruptorLuz[] todos = FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include);
+            for (int i = 0; i < todos.Length; i++)
+            {
+                if (todos[i] != null)
+                    todos[i].RefrescarSegunEnergiaGeneral();
+            }
         }
         apagonEstabaActivo = apagonActivo;
 
@@ -180,6 +188,7 @@ public class CajaFusiblesVR : MonoBehaviour
         yield return new WaitForSeconds(delayConmutacion);
 
         InterruptorLuz.EnergiaGeneralCasaActiva = energiaGeneralActiva;
+        InteractivoMuebleYElectronicoVR.NotificarCambioEnergiaGeneral(energiaGeneralActiva);
 
         if (habiaApagonAnomalo)
         {

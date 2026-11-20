@@ -314,6 +314,13 @@ public class PuertaAutoCierre : MonoBehaviour
 
     private void ProcesarInteraccion(IXRInteractor interactor)
     {
+        Vector3 posRef = Camera.main != null
+            ? ObtenerPuntoMasCercano(Camera.main.transform.position)
+            : ObtenerPosicionMundial();
+
+        if (!InteractorUniversalVR.EstaDentroDeRangoYLineaDeVision(posRef, 2.15f, transform))
+            return;
+
         if (interactor is XRBaseInputInteractor inputInteractor)
             inputInteractor.SendHapticImpulse(0.55f, 0.14f);
 
