@@ -65,6 +65,11 @@ public class TabletSistemaVR : MonoBehaviour
     private string ultimoCuartoGenerado = "";
     private int ultimoTipoGenerado = -1;
     private readonly HashSet<string> categoriasYaMostradasEnTurno = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<ObjetoAnomalia, float> tiempoActivacionPorAnomalia = new Dictionary<ObjetoAnomalia, float>();
+    private readonly Dictionary<string, int> incidentesPorCuarto = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    private float sumaTiemposReaccion = 0f;
+    private int totalTiemposReaccion = 0;
+    private bool evento3AMDisparado = false;
     private float ultimoSegundoInspeccionMostrado = -1f;
     private InputDevice rightController;
     private InputDevice leftController;
@@ -277,7 +282,7 @@ public class TabletSistemaVR : MonoBehaviour
 
     private void Update()
     {
-        if (VRPauseMenu.IsMenuOpen) return;
+        if (VRPauseMenu.IsMenuOpen || FinalTurnoVR.EstaEnSecuenciaFinal) return;
 
         // Fase 1: Inspección previa de la casa (11:55 PM -> 12:00 AM, cero anomalías)
         if (enFaseInspeccion)
@@ -305,6 +310,20 @@ public class TabletSistemaVR : MonoBehaviour
                 relojInterno = 0f;
                 horaActual++;
                 ActualizarRelojUI();
+
+                // Idea 6 (Bloque 2): Al dar las 03:00 AM ("La Hora Muerta"), disparar caída general de tensión eléctrica
+                if (horaActual == 3 && !evento3AMDisparado)
+                {
+                    evento3AMDisparado = true;
+                    if (TensionYAmbienteVR.Instancia != null)
+                        TensionYAmbienteVR.Instancia.DispararEventoHoraMuerta3AM();
+                }
+
+                if (horaActual >= 6)
+                {
+                    AsegurarGestorFinalTurno().ActivarVictoria(anomaliasCorregidas, reportesFallidos);
+                    return;
+                }
             }
 
             float intervaloActual = ObtenerIntervaloAnomaliasPorHora();
@@ -405,13 +424,13 @@ public class TabletSistemaVR : MonoBehaviour
     // =========================================================================
     // GESTOR DE ANOMALÍAS INTEGRADO (COBERTURA GARANTIZADA 1x POR TIPO + SIN REPETIR CUARTO)
     // =========================================================================
-    private static readonly string[] CategoriasHoraTemprana = { "Displacement", "Mimic", "Electrical_Luz", "Unknown_Puerta", "Unknown_Pared" };
-    private static readonly string[] CategoriasHoraMedia    = { "Preacher", "Tulpa", "Corpse", "Unknown_LuzDia", "Unknown_Pared", "Electrical_Apagon" };
-    private static readonly string[] CategoriasHoraTardia   = { "Flawed", "PureForm", "Electrical_Apagon", "Tulpa", "Preacher", "Corpse", "Unknown_LuzDia", "Unknown_Pared" };
+    private static readonly string[] CategoriasHoraTemprana = { "Imagery", "Displacement", "Mimic", "Electrical_Luz", "Unknown_Puerta", "Unknown_Pared" };
+    private static readonly string[] CategoriasHoraMedia    = { "Unknown_PuertaAbismal", "Preacher", "Tulpa", "Corpse", "Unknown_LuzDia", "Unknown_Pared", "Electrical_Apagon", "Imagery" };
+    private static readonly string[] CategoriasHoraTardia   = { "Flawed", "PureForm", "Unknown_PuertaAbismal", "Electrical_Apagon", "Tulpa", "Preacher", "Corpse", "Unknown_LuzDia", "Unknown_Pared" };
     private static readonly string[] TodasLasCategoriasDemo =
     {
-        "Displacement", "Mimic", "Electrical_Luz", "Electrical_Apagon",
-        "Unknown_Puerta", "Unknown_LuzDia", "Unknown_Pared",
+        "Imagery", "Displacement", "Mimic", "Electrical_Luz", "Electrical_Apagon",
+        "Unknown_Puerta", "Unknown_PuertaAbismal", "Unknown_LuzDia", "Unknown_Pared",
         "Preacher", "Tulpa", "Corpse", "Flawed", "PureForm"
     };
 
@@ -431,6 +450,9 @@ public class TabletSistemaVR : MonoBehaviour
 
             switch (categoria)
             {
+                case "Imagery":
+                    if (v.tipo == TipoAnomalia.Imagery) { tipoAsociado = TipoAnomalia.Imagery; return true; }
+                    break;
                 case "Displacement":
                     if (v.tipo == TipoAnomalia.Displacement) { tipoAsociado = TipoAnomalia.Displacement; return true; }
                     break;
@@ -448,6 +470,13 @@ public class TabletSistemaVR : MonoBehaviour
                     if (v.tipo == TipoAnomalia.Electrical && !esCajaFusibles && !desc.Contains("apag") && !desc.Contains("fusible"))
                     {
                         tipoAsociado = TipoAnomalia.Electrical;
+                        return true;
+                    }
+                    break;
+                case "Unknown_PuertaAbismal":
+                    if (v.tipo == TipoAnomalia.Unknown && (objNombre.Contains("puertaabismal") || desc.Contains("abismo") || desc.Contains("imposible")))
+                    {
+                        tipoAsociado = TipoAnomalia.Unknown;
                         return true;
                     }
                     break;
@@ -554,6 +583,13 @@ public class TabletSistemaVR : MonoBehaviour
 
         elegida.ActivarAnomalia(tipoForzado);
 
+        tiempoActivacionPorAnomalia[elegida] = Time.time;
+        if (!string.IsNullOrEmpty(elegida.nombreCuarto))
+        {
+            string cKey = elegida.nombreCuarto.Trim();
+            incidentesPorCuarto[cKey] = (incidentesPorCuarto.TryGetValue(cKey, out int prev) ? prev : 0) + 1;
+        }
+
         if (!string.IsNullOrEmpty(categoriaElegida))
             categoriasYaMostradasEnTurno.Add(categoriaElegida);
 
@@ -564,6 +600,8 @@ public class TabletSistemaVR : MonoBehaviour
 
         ActualizarRelojUI();
         Debug.Log($"[ANOMALÍA ACTIVADA | {horaActual:00}:00 AM | Cat: {categoriaElegida ?? "RNG"}] Cuarto: {ObtenerNombreCuartoEspanol(elegida.nombreCuarto)} ({elegida.nombreCuarto}) | Tipo: {ObtenerNombreTipoEspanol(elegida.tipoActivoActual)} | Objeto: {elegida.name}");
+
+        EvaluarDerrotaPorAcumulacionOFallos();
     }
 
     private bool IntentarElegirDeCategorias(
@@ -751,14 +789,15 @@ public class TabletSistemaVR : MonoBehaviour
         if (anomaliaEncontrada != null)
         {
             string cuartoRealEsp = ObtenerNombreCuartoEspanol(anomaliaEncontrada.nombreCuarto);
-            try
+            if (tiempoActivacionPorAnomalia.TryGetValue(anomaliaEncontrada, out float tInicio))
             {
-                anomaliaEncontrada.RestaurarNormalidad();
+                sumaTiemposReaccion += Mathf.Max(1f, Time.time - tInicio);
+                totalTiemposReaccion++;
+                tiempoActivacionPorAnomalia.Remove(anomaliaEncontrada);
             }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[Tablet] Aviso al restaurar anomalía {anomaliaEncontrada.name}: {ex.Message}");
-            }
+
+            // Idea 7 (Bloque 2): Desaparición en micro-corte de luz del cuarto para que la entidad se esfume en el parpadeo
+            InterruptorLuz.EjecutarMicroCorteYRestaurar(this, anomaliaEncontrada);
 
             anomaliasCorregidas++;
             textoEstadoReporte.text = $"¡CORREGIDA! ({cuartoRealEsp} - {tipoEsp})";
@@ -793,6 +832,48 @@ public class TabletSistemaVR : MonoBehaviour
             textoEstadoReporte.color = new Color(1f, 0.35f, 0.35f, 1f);
             if (audioFeedback && sonidoFallo) audioFeedback.PlayOneShot(sonidoFallo);
             EnviarHapticPulso(0.3f, 0.1f);
+
+            EvaluarDerrotaPorAcumulacionOFallos();
+        }
+    }
+
+    private FinalTurnoVR AsegurarGestorFinalTurno()
+    {
+        if (FinalTurnoVR.Instancia != null) return FinalTurnoVR.Instancia;
+        FinalTurnoVR existente = FindAnyObjectByType<FinalTurnoVR>(FindObjectsInactive.Include);
+        if (existente != null) return existente;
+        return gameObject.AddComponent<FinalTurnoVR>();
+    }
+
+    private TipoAnomalia ObtenerEntidadResponsableScreamer()
+    {
+        for (int i = 0; i < todasLasAnomalias.Count; i++)
+        {
+            ObjetoAnomalia a = todasLasAnomalias[i];
+            if (a != null && a.estaActiva && EsEntidadHumanoide(a.tipoActivoActual))
+                return a.tipoActivoActual;
+        }
+        return EsEntidadHumanoide(ultimoTipoHumanoideAparecido) ? ultimoTipoHumanoideAparecido : TipoAnomalia.Flawed;
+    }
+
+    private void EvaluarDerrotaPorAcumulacionOFallos()
+    {
+        if (FinalTurnoVR.EstaEnSecuenciaFinal || enFaseInspeccion || horaActual >= 6) return;
+
+        FinalTurnoVR gestorFinal = AsegurarGestorFinalTurno();
+        int activas = ContarAnomaliasActivas();
+
+        if (activas >= gestorFinal.maxAnomaliasActivasParaPerder)
+        {
+            gestorFinal.ActivarDerrota(
+                ObtenerEntidadResponsableScreamer(),
+                $"Colapso de vigilancia: se acumularon {activas} anomalías activas sin contener.");
+        }
+        else if (reportesFallidos >= gestorFinal.maxReportesFallidosParaPerder)
+        {
+            gestorFinal.ActivarDerrota(
+                ObtenerEntidadResponsableScreamer(),
+                $"Fallo cognitivo crítico: acumulaste {reportesFallidos} reportes erróneos.");
         }
     }
 
@@ -805,6 +886,26 @@ public class TabletSistemaVR : MonoBehaviour
                 c++;
         }
         return c;
+    }
+
+    public string ObtenerResumenExpedienteCognitivo()
+    {
+        string horaStr = enFaseInspeccion ? "11:55 PM" : (horaActual == 0 ? "12:00 AM" : $"0{Mathf.Min(horaActual, 6)}:00 AM");
+        string cuartoCritico = "SALA";
+        int maxInc = 0;
+        foreach (var kv in incidentesPorCuarto)
+        {
+            if (kv.Value > maxInc)
+            {
+                maxInc = kv.Value;
+                cuartoCritico = ObtenerNombreCuartoEspanol(kv.Key);
+            }
+        }
+        string tiempoMedioStr = totalTiemposReaccion > 0
+            ? $"{(sumaTiemposReaccion / totalTiemposReaccion):F1} s"
+            : "N/A";
+
+        return $"Hora del registro: {horaStr}  |  Sector crítico: {cuartoCritico}  |  Reacción media: {tiempoMedioStr}";
     }
 
     private void EnviarHapticPulso(float amplitud, float duracion)

@@ -13,7 +13,7 @@ using TMPro;
 [InitializeOnLoad]
 public class RepararPuertasVR : EditorWindow
 {
-    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v11.flag";
+    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v16.flag";
 
     static RepararPuertasVR()
     {
@@ -334,6 +334,44 @@ public class RepararPuertasVR : EditorWindow
             if (clipCrujido != null) tension.clipCrujidoMadera = clipCrujido;
             if (clipGolpe != null) tension.clipGolpeMadera = clipGolpe;
             EditorUtility.SetDirty(tension);
+        }
+
+        // 10. Asegurar y conectar audios de Fase 3 (Screamer + Death Screen VHS + Victoria 6:00 AM)
+        FinalTurnoVR finalTurno = Object.FindAnyObjectByType<FinalTurnoVR>(FindObjectsInactive.Include);
+        if (finalTurno == null)
+        {
+            InteractorUniversalVR inter = Object.FindAnyObjectByType<InteractorUniversalVR>(FindObjectsInactive.Include);
+            if (inter != null)
+                finalTurno = Undo.AddComponent<FinalTurnoVR>(inter.gameObject);
+        }
+        if (finalTurno != null)
+        {
+            Undo.RecordObject(finalTurno, "Asignar Audios Fase 3 FinalTurnoVR");
+            AudioClip clipScream = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_screamer_anomalia.wav");
+            AudioClip clipVhs = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_deathscreen_vhs_alarm.wav");
+            AudioClip clipFlat = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_deathscreen_flatline.wav");
+            AudioClip clipVic = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_victoria_6am.wav");
+            Font fontVt323 = AssetDatabase.LoadAssetAtPath<Font>("Assets/VT323/VT323-Regular.ttf");
+            if (clipScream != null) finalTurno.sonidoScreamer = clipScream;
+            if (clipVhs != null) finalTurno.sonidoAlarmaVHS = clipVhs;
+            if (clipFlat != null) finalTurno.sonidoFlatline = clipFlat;
+            if (clipVic != null) finalTurno.sonidoVictoria6AM = clipVic;
+            if (fontVt323 != null) finalTurno.fuenteTerrorVHS = fontVt323;
+            EditorUtility.SetDirty(finalTurno);
+        }
+
+        // 11. Inicializar Tareas Base B (Cuadros Imagery) y Bloque 1 (Puerta Imposible Unknown, Relojes Vivos, Muebles y Aparatos)
+        Bloque1AnomaliasInteractivasVR bloque1 = Object.FindAnyObjectByType<Bloque1AnomaliasInteractivasVR>(FindObjectsInactive.Include);
+        if (bloque1 == null)
+        {
+            InteractorUniversalVR inter = Object.FindAnyObjectByType<InteractorUniversalVR>(FindObjectsInactive.Include);
+            if (inter != null)
+                bloque1 = Undo.AddComponent<Bloque1AnomaliasInteractivasVR>(inter.gameObject);
+        }
+        if (bloque1 != null)
+        {
+            bloque1.InicializarTodoBloque1();
+            EditorUtility.SetDirty(bloque1);
         }
 
         Scene activeScene = SceneManager.GetActiveScene();

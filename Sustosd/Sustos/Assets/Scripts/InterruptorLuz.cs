@@ -12,12 +12,14 @@ using UnityEngine.XR.Interaction.Toolkit.Interactors;
 [RequireComponent(typeof(XRSimpleInteractable))]
 public class InterruptorLuz : MonoBehaviour
 {
-    public const float IntensidadPiso1 = 2.0f;
-    public const float RangoPiso1 = 7.0f;
-    public const float IntensidadPiso2 = 1.35f;
-    public const float RangoPiso2 = 5.6f;
+    public const float IntensidadPiso1 = 2.4f;
+    public const float RangoPiso1 = 5.8f;
+    public const float IntensidadPiso2 = 1.75f;
+    public const float RangoPiso2 = 4.8f;
 
     public static bool EnergiaGeneralCasaActiva = true;
+    public static float FactorVoltajeGlobal = 1.0f;
+    public static bool EnEventoHoraMuerta3AM = false;
 
     // Tabla determinista 1 a 1: cada uno de los 14 switches tiene su propio foco único (0 repeticiones)
     private static readonly Dictionary<string, string> MapaExactoSwitchALuz = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
@@ -63,6 +65,8 @@ public class InterruptorLuz : MonoBehaviour
 
     private static AudioClip clipClickProcedural;
     private static int ultimoFrameAsignacionGlobal = -1;
+    private static readonly Dictionary<Light, Renderer> mapaLuzABulbo3D = new Dictionary<Light, Renderer>();
+    private static MaterialPropertyBlock bloquePropiedadBulbo;
 
     private struct ParSwitchLuz
     {
@@ -103,7 +107,7 @@ public class InterruptorLuz : MonoBehaviour
         if (!EnergiaGeneralCasaActiva)
         {
             if (luzDelCuarto != null && luzDelCuarto.enabled)
-                luzDelCuarto.enabled = false;
+                AplicarEstadoALuces(false);
             return;
         }
 
@@ -117,8 +121,17 @@ public class InterruptorLuz : MonoBehaviour
                 float factor = encendidaMomento ? Random.Range(0.25f, 1.45f) : 0.03f;
 
                 luzDelCuarto.enabled = true;
-                luzDelCuarto.intensity = intensidadBaseLuz * factor;
+                luzDelCuarto.intensity = intensidadBaseLuz * factor * FactorVoltajeGlobal;
+                ActualizarVisualBulbo3D(luzDelCuarto, encendidaMomento);
             }
+        }
+        else if (EnEventoHoraMuerta3AM && estaEncendida && luzDelCuarto != null && luzDelCuarto.enabled)
+        {
+            // Durante La Hora Muerta (03:00 AM), aplicar caída de voltaje ámbar fluctuante
+            Color colNormal = luzDelCuarto.transform.position.y > 3.6f ? new Color(1.0f, 0.89f, 0.74f) : new Color(1.0f, 0.90f, 0.76f);
+            Color colAmbar = new Color(1.0f, 0.44f, 0.16f);
+            luzDelCuarto.intensity = intensidadBaseLuz * FactorVoltajeGlobal;
+            luzDelCuarto.color = Color.Lerp(colAmbar, colNormal, Mathf.Clamp01((FactorVoltajeGlobal - 0.22f) / 0.78f));
         }
     }
 
@@ -178,8 +191,8 @@ public class InterruptorLuz : MonoBehaviour
 
         foreach (Light l in todasLasLuces)
         {
-            if (l == null || l.type != LightType.Point) continue;
-            if (l.name.Contains("Fusibles") || l.name.Contains("Unknown") || l.name.Contains("Electrico") || l.name.Contains("Tulpa") || l.name.Contains("Tablet") || l.name.Contains("Interior"))
+            if (l == null || (l.type != LightType.Point && l.type != LightType.Spot)) continue;
+            if (l.name.Contains("Fusibles") || l.name.Contains("Unknown") || l.name.Contains("Electrico") || l.name.Contains("Tulpa") || l.name.Contains("Tablet") || l.name.Contains("Interior") || l.name.Contains("Halo_Techo"))
                 continue;
             if (l.name.Contains("Luz_Real_Cuarto"))
             {
@@ -194,7 +207,6 @@ public class InterruptorLuz : MonoBehaviour
                 Vector3 posFoco = rFoco != null ? rFoco.bounds.center : l.transform.parent.position;
                 l.transform.SetParent(contenedorLuces.transform, true);
                 l.transform.position = posFoco;
-                l.transform.rotation = Quaternion.identity;
                 l.transform.localScale = Vector3.one;
             }
 
@@ -207,13 +219,21 @@ public class InterruptorLuz : MonoBehaviour
                 pos.y = 5.75f;
             l.transform.position = pos;
 
+            // Convertir en lámpara arquitectónica real: cono ancho hacia abajo (evita mancha blanca en techo y evita atravesar muros laterales)
             l.gameObject.SetActive(true);
+            l.type = LightType.Spot;
+            l.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+            l.spotAngle = 144f;
+            l.innerSpotAngle = 76f;
             l.renderMode = LightRenderMode.ForcePixel;
             l.shadows = LightShadows.None;
             l.intensity = esSegundoPiso ? IntensidadPiso2 : IntensidadPiso1;
             l.range = esSegundoPiso ? RangoPiso2 : RangoPiso1;
-            l.color = esSegundoPiso ? new Color(1.0f, 0.90f, 0.76f) : new Color(1.0f, 0.91f, 0.78f);
+            l.color = esSegundoPiso ? new Color(1.0f, 0.89f, 0.74f) : new Color(1.0f, 0.90f, 0.76f);
             l.cullingMask = ~0;
+
+            // Añadir un halo de relleno corto (2.4m) justo bajo el foco para iluminar suavemente el techo sin cruzar paredes
+            AsegurarHaloSuaveDeTecho(l);
 
             lucesPorNombre[l.name.Trim()] = l;
             if (esSegundoPiso) lucesPiso2.Add(l);
@@ -250,6 +270,109 @@ public class InterruptorLuz : MonoBehaviour
             EmparejarRestantesSinRepeticion(sinMapaExplicitoP1, lucesPiso1, lucesYaAsignadas);
         if (sinMapaExplicitoP2.Count > 0)
             EmparejarRestantesSinRepeticion(sinMapaExplicitoP2, lucesPiso2, lucesYaAsignadas);
+
+        // Vincular los 4 focos restantes (ej. focus01, focus0101, focus0103 del porche exterior, focus0210)
+        // como lucesExtraDelCuarto del switch más cercano de su mismo piso (sin repetir en ningún otro switch)
+        AsignarFocosHuerfanosASwitchMasCercano(todosSwitches, lucesPiso1, false, lucesYaAsignadas);
+        AsignarFocosHuerfanosASwitchMasCercano(todosSwitches, lucesPiso2, true, lucesYaAsignadas);
+
+        // Mapear cada Light con su malla 3D de foco (Focus_*) para oscurecer el bulbo cuando la luz se apaga
+        ConstruirMapaLuzABulbo3D(lucesPiso1, lucesPiso2);
+    }
+
+    private static void AsignarFocosHuerfanosASwitchMasCercano(
+        InterruptorLuz[] todosSwitches,
+        List<Light> lucesPiso,
+        bool esPiso2,
+        HashSet<Light> lucesYaAsignadas)
+    {
+        for (int i = 0; i < lucesPiso.Count; i++)
+        {
+            Light luzHuerfana = lucesPiso[i];
+            if (luzHuerfana == null || lucesYaAsignadas.Contains(luzHuerfana)) continue;
+
+            InterruptorLuz mejorSw = null;
+            float menorDist = float.MaxValue;
+            Vector3 pLuz = luzHuerfana.transform.position;
+
+            for (int s = 0; s < todosSwitches.Length; s++)
+            {
+                InterruptorLuz sw = todosSwitches[s];
+                if (sw == null || PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(sw.transform)) continue;
+                bool swEnPiso2 = sw.ObtenerPosicionMundial().y > 2.8f;
+                if (swEnPiso2 != esPiso2) continue;
+
+                float d = Vector3.Distance(sw.ObtenerPosicionMundial(), pLuz);
+                if (d < menorDist)
+                {
+                    menorDist = d;
+                    mejorSw = sw;
+                }
+            }
+
+            if (mejorSw != null)
+            {
+                if (!mejorSw.lucesExtraDelCuarto.Contains(luzHuerfana))
+                    mejorSw.lucesExtraDelCuarto.Add(luzHuerfana);
+                lucesYaAsignadas.Add(luzHuerfana);
+            }
+        }
+    }
+
+    private static void ConstruirMapaLuzABulbo3D(List<Light> l1, List<Light> l2)
+    {
+        mapaLuzABulbo3D.Clear();
+        GameObject house = GameObject.Find("House");
+        if (house == null) return;
+
+        List<Renderer> bulbos = new List<Renderer>();
+        foreach (Renderer r in house.GetComponentsInChildren<Renderer>(true))
+        {
+            if (r != null && r.name.ToLowerInvariant().StartsWith("focus"))
+                bulbos.Add(r);
+        }
+
+        VincularListaLucesABulbos(l1, bulbos);
+        VincularListaLucesABulbos(l2, bulbos);
+    }
+
+    private static void VincularListaLucesABulbos(List<Light> luces, List<Renderer> bulbos)
+    {
+        for (int i = 0; i < luces.Count; i++)
+        {
+            Light l = luces[i];
+            if (l == null) continue;
+            Renderer mejor = null;
+            float menorDist = 1.6f;
+            for (int b = 0; b < bulbos.Count; b++)
+            {
+                float d = Vector3.Distance(l.transform.position, bulbos[b].bounds.center);
+                if (d < menorDist)
+                {
+                    menorDist = d;
+                    mejor = bulbos[b];
+                }
+            }
+            if (mejor != null)
+                mapaLuzABulbo3D[l] = mejor;
+        }
+    }
+
+    private static void ActualizarVisualBulbo3D(Light l, bool encendida)
+    {
+        if (l == null) return;
+        if (!mapaLuzABulbo3D.TryGetValue(l, out Renderer r) || r == null) return;
+
+        if (bloquePropiedadBulbo == null)
+            bloquePropiedadBulbo = new MaterialPropertyBlock();
+
+        r.GetPropertyBlock(bloquePropiedadBulbo);
+        Color colBase = encendida ? new Color(1.0f, 0.94f, 0.80f, 1f) : new Color(0.14f, 0.14f, 0.16f, 1f);
+        Color colEmis = encendida ? new Color(0.95f, 0.85f, 0.65f, 1f) : Color.black;
+        bloquePropiedadBulbo.SetColor("_BaseColor", colBase);
+        bloquePropiedadBulbo.SetColor("_Color", colBase);
+        bloquePropiedadBulbo.SetColor("_EmissionColor", colEmis);
+        r.SetPropertyBlock(bloquePropiedadBulbo);
     }
 
     private static void EmparejarRestantesSinRepeticion(List<InterruptorLuz> switches, List<Light> luces, HashSet<Light> lucesYaAsignadas)
@@ -466,8 +589,13 @@ public class InterruptorLuz : MonoBehaviour
             luzDelCuarto.gameObject.SetActive(true);
             luzDelCuarto.renderMode = LightRenderMode.ForcePixel;
             if (!parpadeoAnomaloActivo)
-                luzDelCuarto.intensity = luzDelCuarto.transform.position.y > 3.6f ? IntensidadPiso2 : IntensidadPiso1;
+            {
+                luzDelCuarto.intensity = (luzDelCuarto.transform.position.y > 3.6f ? IntensidadPiso2 : IntensidadPiso1) * FactorVoltajeGlobal;
+                luzDelCuarto.color = luzDelCuarto.transform.position.y > 3.6f ? new Color(1.0f, 0.89f, 0.74f) : new Color(1.0f, 0.90f, 0.76f);
+            }
             luzDelCuarto.enabled = encender;
+            ActualizarHaloHijo(luzDelCuarto, encender);
+            ActualizarVisualBulbo3D(luzDelCuarto, encender);
         }
 
         if (lucesExtraDelCuarto != null)
@@ -480,9 +608,112 @@ public class InterruptorLuz : MonoBehaviour
                     l.gameObject.SetActive(true);
                     l.renderMode = LightRenderMode.ForcePixel;
                     l.enabled = encender;
+                    ActualizarHaloHijo(l, encender);
+                    ActualizarVisualBulbo3D(l, encender);
                 }
             }
         }
+    }
+
+    private static void AsegurarHaloSuaveDeTecho(Light luzPrincipal)
+    {
+        if (luzPrincipal == null) return;
+        Transform haloT = luzPrincipal.transform.Find("Halo_Techo_Suave");
+        Light halo;
+        if (haloT == null)
+        {
+            GameObject hObj = new GameObject("Halo_Techo_Suave");
+            hObj.transform.SetParent(luzPrincipal.transform, false);
+            hObj.transform.localPosition = new Vector3(0f, 0f, 0.08f);
+            halo = hObj.AddComponent<Light>();
+        }
+        else
+        {
+            halo = haloT.GetComponent<Light>();
+        }
+
+        if (halo != null)
+        {
+            halo.type = LightType.Point;
+            halo.range = 2.35f;
+            halo.intensity = luzPrincipal.transform.position.y > 3.6f ? 0.32f : 0.42f;
+            halo.color = luzPrincipal.color;
+            halo.shadows = LightShadows.None;
+            halo.renderMode = LightRenderMode.ForcePixel;
+            halo.enabled = luzPrincipal.enabled;
+        }
+    }
+
+    private static void ActualizarHaloHijo(Light luzPrincipal, bool encender)
+    {
+        if (luzPrincipal == null) return;
+        Transform haloT = luzPrincipal.transform.Find("Halo_Techo_Suave");
+        if (haloT != null)
+        {
+            Light h = haloT.GetComponent<Light>();
+            if (h != null) h.enabled = encender;
+        }
+    }
+
+    /// <summary>
+    /// Idea 7 (Bloque 2): Al corregir una anomalía, el foco del cuarto da un micro-corte seco de 0.16 s
+    /// y la entidad/anomalía desaparece durante ese instante de oscuridad.
+    /// </summary>
+    public static void EjecutarMicroCorteYRestaurar(MonoBehaviour runner, ObjetoAnomalia anomalia)
+    {
+        if (anomalia == null) return;
+        if (runner == null || !runner.gameObject.activeInHierarchy)
+        {
+            anomalia.RestaurarNormalidad();
+            return;
+        }
+        runner.StartCoroutine(RutinaMicroCorteYRestaurar(anomalia));
+    }
+
+    private static IEnumerator RutinaMicroCorteYRestaurar(ObjetoAnomalia anomalia)
+    {
+        Vector3 posAnom = anomalia != null ? anomalia.ObtenerPosicionVisualActiva() : Vector3.zero;
+        InterruptorLuz swCercano = BuscarSwitchMasCercano(posAnom);
+        bool teniaLuz = swCercano != null && swCercano.estaEncendida && EnergiaGeneralCasaActiva;
+
+        if (teniaLuz)
+            swCercano.AplicarEstadoALuces(false);
+
+        yield return new WaitForSeconds(0.11f);
+
+        if (anomalia != null)
+        {
+            try { anomalia.RestaurarNormalidad(); }
+            catch (System.Exception ex) { Debug.LogWarning($"[MicroCorte] {ex.Message}"); }
+        }
+
+        yield return new WaitForSeconds(0.08f);
+
+        if (teniaLuz && swCercano != null)
+            swCercano.RefrescarSegunEnergiaGeneral();
+    }
+
+    public static InterruptorLuz BuscarSwitchMasCercano(Vector3 pos)
+    {
+        InterruptorLuz[] todos = FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include);
+        InterruptorLuz mejor = null;
+        float menorDist = float.MaxValue;
+        bool piso2 = pos.y >= 3.15f;
+
+        for (int i = 0; i < todos.Length; i++)
+        {
+            InterruptorLuz sw = todos[i];
+            if (sw == null) continue;
+            Vector3 pSw = sw.ObtenerPosicionMundial();
+            if ((pSw.y >= 3.15f) != piso2) continue;
+            float d = Vector3.Distance(pos, pSw);
+            if (d < menorDist)
+            {
+                menorDist = d;
+                mejor = sw;
+            }
+        }
+        return mejor;
     }
 
     public void AlternarDesdeRayo()

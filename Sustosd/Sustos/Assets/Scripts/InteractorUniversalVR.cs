@@ -57,9 +57,13 @@ public class InteractorUniversalVR : MonoBehaviour
         VentanasYLimitesVR.AsegurarCollidersMueblesTangibles();
         AsegurarPuertasYSwitchesEnEscena();
 
-        // 3. Asegurar sistema de tensión psicológica, latido, glitch de Tablet y paranoia ambiental (Fase 2)
+        // 3. Asegurar sistema de tensión psicológica, latido, glitch de Tablet, paranoia ambiental (Fase 2) y Fin de Turno / Screamer / Death Screen (Fase 3)
         if (FindAnyObjectByType<TensionYAmbienteVR>(FindObjectsInactive.Include) == null)
             gameObject.AddComponent<TensionYAmbienteVR>();
+        if (FindAnyObjectByType<FinalTurnoVR>(FindObjectsInactive.Include) == null)
+            gameObject.AddComponent<FinalTurnoVR>();
+        if (FindAnyObjectByType<Bloque1AnomaliasInteractivasVR>(FindObjectsInactive.Include) == null)
+            gameObject.AddComponent<Bloque1AnomaliasInteractivasVR>();
     }
 
     void Start()

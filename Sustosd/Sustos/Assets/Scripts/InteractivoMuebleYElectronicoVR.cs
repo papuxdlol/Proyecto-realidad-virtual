@@ -107,6 +107,45 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
         }
     }
 
+    public void ForzarEstadoPorAnomalia(bool abrirOEncender)
+    {
+        bool hayEnergia = InterruptorLuz.EnergiaGeneralCasaActiva;
+        if (!hayEnergia && abrirOEncender && (tipoInteractivo == TipoInteractivoCasa.TelevisorConGifOVideo || tipoInteractivo == TipoInteractivoCasa.RadioSonido))
+            return;
+
+        estaActivoOAbierto = abrirOEncender;
+
+        if (tipoInteractivo == TipoInteractivoCasa.CajonDeslizable)
+        {
+            if (abrirOEncender && audioSource != null && clipCajon != null)
+                audioSource.PlayOneShot(clipCajon, 0.7f);
+        }
+        else if (tipoInteractivo == TipoInteractivoCasa.PuertaElectrodomesticoOGabinete)
+        {
+            if (abrirOEncender && audioSource != null && clipElectrodomestico != null)
+                audioSource.PlayOneShot(clipElectrodomestico, 0.75f);
+            if (luzInteriorOPantalla != null)
+                luzInteriorOPantalla.enabled = estaActivoOAbierto && hayEnergia;
+        }
+        else if (tipoInteractivo == TipoInteractivoCasa.TelevisorConGifOVideo)
+        {
+            if (quadPantallaTV != null)
+                quadPantallaTV.SetActive(estaActivoOAbierto && hayEnergia);
+            if (luzInteriorOPantalla != null)
+                luzInteriorOPantalla.enabled = estaActivoOAbierto && hayEnergia;
+            if (videoPlayerTV != null && videoClipPersonalizado != null)
+            {
+                if (estaActivoOAbierto && hayEnergia) videoPlayerTV.Play();
+                else videoPlayerTV.Pause();
+            }
+        }
+        else if (tipoInteractivo == TipoInteractivoCasa.RadioSonido)
+        {
+            if (audioSource != null && !estaActivoOAbierto && audioSource.isPlaying)
+                audioSource.Stop();
+        }
+    }
+
     public string ObtenerEtiquetaHUD()
     {
         bool hayLuz = InterruptorLuz.EnergiaGeneralCasaActiva;
@@ -216,13 +255,13 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
         if (n.StartsWith("refrigerator_door"))
         {
             etiquetaHUD = n.Contains("_01") ? "Congelador" : "Refrigerador";
-            anguloAperturaPuerta = -88f;
+            anguloAperturaPuerta = 88f; // Abre hacia afuera (hacia la cocina), nunca hacia adentro del refrigerador
             CrearLuzInteriorElectrodomestico(new Color(0.82f, 0.94f, 1f), 1.3f, 1.8f, new Vector3(-0.25f, 0f, 0.35f));
         }
         else if (n.StartsWith("microwave_door"))
         {
             etiquetaHUD = "Microondas";
-            anguloAperturaPuerta = -82f;
+            anguloAperturaPuerta = 82f; // Invertido a +82° para que abra hacia afuera (hacia el jugador) y nunca hacia adentro del microondas
             CrearLuzInteriorElectrodomestico(new Color(1f, 0.85f, 0.45f), 1.1f, 1.1f, new Vector3(-0.15f, 0f, 0.15f));
         }
         else if (n.StartsWith("washing_machine_d"))
@@ -230,8 +269,10 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
             etiquetaHUD = "Lavadora";
             if (n.Contains("_02"))
             {
-                // Tapa superior o frontal de segunda lavadora
-                anguloAperturaPuerta = -75f;
+                // Lavadora 2: tapa superior que se levanta hacia arriba sobre su bisagra trasera
+                puntoBisagraMundial = new Vector3(b.max.x, b.center.y, b.center.z);
+                ejeGiroLocalOMundial = Vector3.forward;
+                anguloAperturaPuerta = -72f;
             }
             else
             {
@@ -247,12 +288,17 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
         else if (n.StartsWith("bathroom_cabinet_door"))
         {
             etiquetaHUD = "Gabinete de Baño";
-            anguloAperturaPuerta = n.Contains("_01") ? -85f : 85f;
+            // Bathroom_cabinet (abajo) y Bathroom_cabinet.001 (arriba) tienen escalas opuestas; abrir siempre hacia afuera de la pared
+            bool esArriba = b.center.y > 3.15f;
+            bool esPuerta01 = n.Contains("_01");
+            anguloAperturaPuerta = (esArriba == esPuerta01) ? 85f : -85f;
         }
         else if (n.StartsWith("washbasin_door"))
         {
             etiquetaHUD = "Puerta de Lavabo";
-            anguloAperturaPuerta = n.Contains("03") ? -85f : 85f;
+            bool esArriba = b.center.y > 3.15f;
+            bool esPuerta03 = n.Contains("03");
+            anguloAperturaPuerta = (esArriba == esPuerta03) ? 85f : -85f;
         }
     }
 
@@ -637,7 +683,8 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
             if (Mathf.Abs(progresoActual - objetivo) > 0.05f)
             {
                 progresoActual = Mathf.MoveTowards(progresoActual, objetivo, velocidadGiroPuerta * Time.deltaTime);
-                Quaternion rotGiro = Quaternion.AngleAxis(progresoActual, Vector3.up);
+                Vector3 eje = ejeGiroLocalOMundial.sqrMagnitude > 0.01f ? ejeGiroLocalOMundial : Vector3.up;
+                Quaternion rotGiro = Quaternion.AngleAxis(progresoActual, eje);
                 Vector3 offset = posCerradaMundial - puntoBisagraMundial;
                 transform.position = puntoBisagraMundial + (rotGiro * offset);
                 transform.rotation = rotGiro * rotCerradaMundial;

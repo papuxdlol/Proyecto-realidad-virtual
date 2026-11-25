@@ -42,9 +42,17 @@ public class TensionYAmbienteVR : MonoBehaviour
     private int falsosPositivosEjecutados = 0;
     private float proximoFalsoPositivo = -1f;
     private Coroutine rutinaAudioParanoia;
+    private Coroutine rutinaHoraMuerta3AM;
+
+    // Bloque 2 (Ideas 8 y 9): Puerta cerrada que tiembla y puerta que se azota si tardas > 18s en cuarto con anomalía
+    private float proximoTemblorPuertaPermitido = 0f;
+    private string cuartoAnomaloEstanciaActual = "";
+    private float tiempoEstanciaEnCuartoAnomalo = 0f;
+    private float proximoAzotePorTardanzaPermitido = 0f;
 
     private PuertaAutoCierre[] cachePuertas;
     private InterruptorLuz[] cacheSwitches;
+    private static AudioClip clipZumbido3AM;
 
     private static readonly Vector3[] PuntosParanoiaCasa = new Vector3[]
     {
@@ -98,7 +106,7 @@ public class TensionYAmbienteVR : MonoBehaviour
 
     void Update()
     {
-        if (VRPauseMenu.IsMenuOpen) return;
+        if (VRPauseMenu.IsMenuOpen || FinalTurnoVR.EstaEnSecuenciaFinal) return;
 
         TabletSistemaVR tablet = TabletSistemaVR.Instancia;
         if (tablet == null || tablet.EstaEnInspeccion || tablet.HoraActual >= 6)
@@ -223,6 +231,175 @@ public class TensionYAmbienteVR : MonoBehaviour
             entidadMiradaActual = null;
             tiempoMirandoEntidad = Mathf.Max(0f, tiempoMirandoEntidad - dt * 1.5f);
         }
+
+        // Idea 8 y Idea 9 (Bloque 2): Evaluar puertas cerradas que tiemblan con entidad adentro y azote por tardar > 18s
+        EvaluarPuertasVivasPorAnomalia(tablet, posCam, dt);
+    }
+
+    private void EvaluarPuertasVivasPorAnomalia(TabletSistemaVR tablet, Vector3 posCam, float dt)
+    {
+        if (cachePuertas == null || cachePuertas.Length == 0) return;
+
+        string cuartoJugador = ObjetoAnomalia.NormalizarCuartoPorPosicion(posCam, "LivingRoom");
+        ObjetoAnomalia anomaliaEnMismoCuarto = null;
+        List<ObjetoAnomalia> lista = tablet.todasLasAnomalias;
+
+        for (int i = 0; i < lista.Count; i++)
+        {
+            ObjetoAnomalia a = lista[i];
+            if (a == null || !a.estaActiva) continue;
+
+            if (string.Equals(a.nombreCuarto, cuartoJugador, System.StringComparison.OrdinalIgnoreCase))
+                anomaliaEnMismoCuarto = a;
+
+            // Idea 8: Si hay una entidad humanoide encerrada detrás de una puerta cerrada y el jugador pasa a < 2.55 m
+            if (TabletSistemaVR.EsEntidadHumanoide(a.tipoActivoActual) && Time.time >= proximoTemblorPuertaPermitido)
+            {
+                Vector3 posEnt = a.ObtenerPosicionVisualActiva();
+                if (Mathf.Abs(posCam.y - posEnt.y) > 2.2f) continue;
+
+                PuertaAutoCierre pCerrada = BuscarPuertaMasCercana(posEnt, requiereAbierta: false, requiereCerrada: true, radioMax: 5.5f);
+                if (pCerrada != null)
+                {
+                    float distJugadorAPuerta = Vector3.Distance(posCam, pCerrada.ObtenerPosicionMundial());
+                    if (distJugadorAPuerta <= 2.55f)
+                    {
+                        proximoTemblorPuertaPermitido = Time.time + Random.Range(7.5f, 11.5f);
+                        pCerrada.SacudirPuertaCerradaPorEntidad();
+                        tablet.EnviarHapticAmbosMandos(0.24f, 0.14f);
+                    }
+                }
+            }
+        }
+
+        // Idea 9: Si el jugador permanece > 18 s dentro de un cuarto con anomalía activa sin reportarla y se acerca a la puerta abierta para salir, se azota sola
+        if (anomaliaEnMismoCuarto != null)
+        {
+            if (string.Equals(cuartoAnomaloEstanciaActual, cuartoJugador, System.StringComparison.OrdinalIgnoreCase))
+                tiempoEstanciaEnCuartoAnomalo += dt;
+            else
+            {
+                cuartoAnomaloEstanciaActual = cuartoJugador;
+                tiempoEstanciaEnCuartoAnomalo = dt;
+            }
+
+            if (tiempoEstanciaEnCuartoAnomalo >= 18.0f && Time.time >= proximoAzotePorTardanzaPermitido)
+            {
+                PuertaAutoCierre pAbierta = BuscarPuertaMasCercana(posCam, requiereAbierta: true, requiereCerrada: false, radioMax: 2.35f);
+                if (pAbierta != null)
+                {
+                    proximoAzotePorTardanzaPermitido = Time.time + 22f;
+                    tiempoEstanciaEnCuartoAnomalo = 0f;
+                    pAbierta.CerrarPuerta(true);
+                    tablet.EnviarHapticAmbosMandos(0.65f, 0.22f);
+                }
+            }
+        }
+        else
+        {
+            cuartoAnomaloEstanciaActual = "";
+            tiempoEstanciaEnCuartoAnomalo = 0f;
+        }
+    }
+
+    private PuertaAutoCierre BuscarPuertaMasCercana(Vector3 origen, bool requiereAbierta, bool requiereCerrada, float radioMax)
+    {
+        if (cachePuertas == null) return null;
+        PuertaAutoCierre mejor = null;
+        float menorDist = radioMax;
+
+        for (int i = 0; i < cachePuertas.Length; i++)
+        {
+            PuertaAutoCierre p = cachePuertas[i];
+            if (p == null) continue;
+            if (requiereAbierta && !p.estaAbierta) continue;
+            if (requiereCerrada && p.estaAbierta) continue;
+
+            Vector3 posP = p.ObtenerPosicionMundial();
+            if (Mathf.Abs(posP.y - origen.y) > 2.1f) continue;
+
+            float d = Vector3.Distance(origen, posP);
+            if (d < menorDist)
+            {
+                menorDist = d;
+                mejor = p;
+            }
+        }
+        return mejor;
+    }
+
+    /// <summary>
+    /// Idea 6 (Bloque 2): Micro-evento de las 03:00 AM ("La Hora Muerta"):
+    /// Caída general de tensión eléctrica en toda la casa durante 6.5 s (luces ámbar tenues + zumbido grave + pulso háptico frío).
+    /// </summary>
+    public void DispararEventoHoraMuerta3AM()
+    {
+        if (!InterruptorLuz.EnergiaGeneralCasaActiva) return;
+        if (rutinaHoraMuerta3AM != null) StopCoroutine(rutinaHoraMuerta3AM);
+        rutinaHoraMuerta3AM = StartCoroutine(RutinaEventoHoraMuerta3AM());
+    }
+
+    private IEnumerator RutinaEventoHoraMuerta3AM()
+    {
+        InterruptorLuz.EnEventoHoraMuerta3AM = true;
+
+        if (clipZumbido3AM == null)
+            clipZumbido3AM = CrearZumbidoCaidaVoltaje3AM();
+
+        if (fuenteLatido != null && clipZumbido3AM != null)
+            fuenteLatido.PlayOneShot(clipZumbido3AM, 0.55f);
+
+        if (TabletSistemaVR.Instancia != null)
+        {
+            TabletSistemaVR.Instancia.EnviarHapticAmbosMandos(0.42f, 0.30f);
+            TabletSistemaVR.Instancia.ActivarGlitchVisual(0.55f);
+        }
+
+        float duracion = 6.5f;
+        float t = 0f;
+        while (t < duracion)
+        {
+            t += Time.deltaTime;
+            float p = t / duracion;
+            // Curva de caída a ~25% con ligero temblor de filamento y recuperación gradual al final
+            float baseCurva = p < 0.15f
+                ? Mathf.Lerp(1.0f, 0.25f, p / 0.15f)
+                : (p < 0.78f ? 0.25f : Mathf.Lerp(0.25f, 1.0f, (p - 0.78f) / 0.22f));
+            float fluctuacion = Mathf.Sin(t * 24f) * 0.04f + Mathf.Cos(t * 11f) * 0.03f;
+            InterruptorLuz.FactorVoltajeGlobal = Mathf.Clamp(baseCurva + fluctuacion, 0.18f, 1.0f);
+            yield return null;
+        }
+
+        InterruptorLuz.FactorVoltajeGlobal = 1.0f;
+        InterruptorLuz.EnEventoHoraMuerta3AM = false;
+
+        if (cacheSwitches != null)
+        {
+            for (int i = 0; i < cacheSwitches.Length; i++)
+            {
+                if (cacheSwitches[i] != null)
+                    cacheSwitches[i].RefrescarSegunEnergiaGeneral();
+            }
+        }
+        rutinaHoraMuerta3AM = null;
+    }
+
+    private static AudioClip CrearZumbidoCaidaVoltaje3AM()
+    {
+        int sr = 22050;
+        int n = Mathf.RoundToInt(sr * 3.2f);
+        float[] d = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            float t = (float)i / sr;
+            float env = Mathf.Sin((t / 3.2f) * Mathf.PI);
+            float f = Mathf.Lerp(92f, 54f, t / 3.2f);
+            float hum = Mathf.Sin(2f * Mathf.PI * f * t) * 0.55f + Mathf.Sin(2f * Mathf.PI * (f * 2f) * t) * 0.25f;
+            d[i] = hum * env * 0.65f;
+        }
+        AudioClip c = AudioClip.Create("Brownout3AMHum", n, 1, sr, false);
+        c.SetData(d, 0);
+        return c;
     }
 
     private void EjecutarReaccionEntidad(ObjetoAnomalia entidad, TabletSistemaVR tablet)

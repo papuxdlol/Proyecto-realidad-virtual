@@ -32,6 +32,7 @@ public class PuertaAutoCierre : MonoBehaviour
     private float anguloActual = 0f;
     private Coroutine rutinaAutoCierre;
     private Coroutine rutinaDelayAccion;
+    private Coroutine rutinaTemblorEntidad;
     private XRSimpleInteractable interactable;
     private BoxCollider hitboxPositivo;
     private int ultimaInteraccionFrame = -1;
@@ -420,6 +421,45 @@ public class PuertaAutoCierre : MonoBehaviour
     {
         yield return new WaitForSeconds(segundosParaCerrarse);
         CerrarPuerta(false);
+    }
+
+    /// <summary>
+    /// Idea 8 (Bloque 2): Cuando hay una entidad humanoide detrás de esta puerta cerrada y el jugador pasa cerca,
+    /// la puerta tiembla en su marco como si forcejearan la manija desde adentro.
+    /// </summary>
+    public void SacudirPuertaCerradaPorEntidad()
+    {
+        if (estaAbierta || !gameObject.activeInHierarchy) return;
+        if (rutinaTemblorEntidad != null) StopCoroutine(rutinaTemblorEntidad);
+        rutinaTemblorEntidad = StartCoroutine(RutinaTemblorPuertaCerrada());
+    }
+
+    private IEnumerator RutinaTemblorPuertaCerrada()
+    {
+        if (audioPuerta != null)
+        {
+            AudioClip clipForcejeo = sonidoCerrar != null ? sonidoCerrar : sonidoAbrirAnomalia;
+            if (clipForcejeo != null)
+            {
+                audioPuerta.pitch = Random.Range(0.68f, 0.78f);
+                audioPuerta.PlayOneShot(clipForcejeo, 0.52f);
+            }
+        }
+
+        float duracion = 0.55f;
+        float t = 0f;
+        while (t < duracion && !estaAbierta)
+        {
+            t += Time.deltaTime;
+            float sacudida = Mathf.Sin(t * 58f) * 1.65f * (1f - t / duracion);
+            AplicarAnguloDesdeCerrada(sacudida);
+            yield return null;
+        }
+
+        if (!estaAbierta)
+            AplicarAnguloDesdeCerrada(0f);
+
+        rutinaTemblorEntidad = null;
     }
 
     void Update()

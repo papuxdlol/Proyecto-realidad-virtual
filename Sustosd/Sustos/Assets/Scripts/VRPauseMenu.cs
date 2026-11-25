@@ -221,6 +221,10 @@ public sealed class VRPauseMenu : MonoBehaviour
         {
             return;
         }
+        if (FinalTurnoVR.EstaEnSecuenciaFinal && !isMenuOpen)
+        {
+            return;
+        }
 
         if (isMenuOpen)
             ResumeGame();
