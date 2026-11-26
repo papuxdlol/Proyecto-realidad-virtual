@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Animations.Rigging;
 
 public enum ModoCorpseContextual
 {
@@ -12,24 +13,68 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
     public TipoAnomalia tipoEntidad = TipoAnomalia.PureForm;
     public bool mirarAlJugador = true;
 
-    [Header("Variantes Contextuales (PureForm y Corpse)")]
+    [Header("Variantes Contextuales (PureForm, Flawed y Corpse)")]
     public bool modoPureFormEscondido = false;
     public float inclinacionAsomoZ = 0f;
     public Vector3 offsetRetraccionLocal = new Vector3(-0.18f, -0.03f, -0.08f);
     public ModoCorpseContextual modoCorpse = ModoCorpseContextual.Acostado;
+
+    [Header("Variantes Esqueléticas Flawed")]
+    public bool modoFlawedSentado = false;
+    public bool modoFlawedEspaldas = false;
 
     private Vector3 posBaseLocal;
     private Quaternion rotBaseLocal;
     private Vector3 escalaBaseLocal;
     private Transform camTransform;
 
+    private Animator animadorActivo;
+    private Rig rigMiradaActiva;
+    private Transform nodoObjetivoMirada;
+    private float pesoMaximoMirada = 0.60f;
+
+    private float proximoCambioClip;
+    private int indiceClipAnterior = -1;
+    private bool enSecuenciaSitToStand = false;
+
     private float tiempoProximoEspasmo;
     private float duracionEspasmoActual;
     private Quaternion rotEspasmo = Quaternion.identity;
-    private Vector3 offsetEspasmo = Vector3.zero;
     private float semillaAleatoria;
     private float tiempoMiradoAcecho;
     private float factorRetraccionAcecho;
+
+    private static readonly string[] EstadosFlawedPie =
+    {
+        "BreathingIdle",
+        "TwitchStare",
+        "MutantBreathing",
+        "LookingAround",
+        "Agony"
+    };
+
+    private static readonly string[] EstadosFlawedSentado =
+    {
+        "SittingIdle",
+        "SittingDisbelief",
+        "SittingRubbingArm",
+        "SittingDodges"
+    };
+
+    private static readonly string[] EstadosPureFormDirecto =
+    {
+        "MutantBreathing",
+        "StalkerSnap",
+        "BreathingIdle"
+    };
+
+    private static readonly string[] EstadosTulpaEspejo =
+    {
+        "BreathingIdle",
+        "MirrorReach",
+        "LookingAround",
+        "Agony"
+    };
 
     private void Awake()
     {
@@ -40,10 +85,14 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
     private void OnEnable()
     {
         GuardarTransformBase();
-        tiempoProximoEspasmo = Time.time + Random.Range(0.8f, 2.2f);
-        duracionEspasmoActual = 0f;
+        enSecuenciaSitToStand = false;
         tiempoMiradoAcecho = 0f;
         factorRetraccionAcecho = 0f;
+        tiempoProximoEspasmo = Time.time + Random.Range(1.2f, 2.8f);
+        duracionEspasmoActual = 0f;
+
+        InicializarAnimatorYAnimationRigging();
+        ProgramarEstadoInicial();
     }
 
     public void GuardarTransformBase()
@@ -55,6 +104,232 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
             escalaBaseLocal = Vector3.one;
     }
 
+    public void ConfigurarModoVarianteFlawed(bool esSentado, bool esEspaldas)
+    {
+        modoFlawedSentado = esSentado;
+        modoFlawedEspaldas = esEspaldas;
+        enSecuenciaSitToStand = false;
+        if (isActiveAndEnabled)
+        {
+            InicializarAnimatorYAnimationRigging();
+            ProgramarEstadoInicial();
+        }
+    }
+
+    public void DispararSitToStandPorReporte()
+    {
+        if (!modoFlawedSentado || enSecuenciaSitToStand) return;
+        enSecuenciaSitToStand = true;
+
+        if (animadorActivo == null)
+            InicializarAnimatorYAnimationRigging();
+
+        if (animadorActivo != null && animadorActivo.runtimeAnimatorController != null)
+        {
+            animadorActivo.CrossFadeInFixedTime("SitToStand", 0.16f, 0, 0f);
+        }
+    }
+
+    public void InicializarAnimatorYAnimationRigging()
+    {
+        animadorActivo = null;
+        rigMiradaActiva = null;
+
+        if (tipoEntidad == TipoAnomalia.Corpse)
+            return;
+
+        // Buscar el Animator del submodelo actualmente activo (ej. Flawed_Variante_0..4 o Modelo_3D_*)
+        Animator[] anims = GetComponentsInChildren<Animator>(false);
+        if (anims != null && anims.Length > 0)
+            animadorActivo = anims[0];
+
+        if (animadorActivo == null) return;
+
+        animadorActivo.applyRootMotion = false;
+        animadorActivo.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        animadorActivo.speed = Random.Range(0.94f, 1.05f);
+
+        // Configurar Animation Rigging (MultiAimConstraint sobre la cabeza hacia la cámara VR del jugador)
+        bool usarAimRig = (tipoEntidad == TipoAnomalia.Flawed && !modoFlawedEspaldas) ||
+                          (tipoEntidad == TipoAnomalia.PureForm && !modoPureFormEscondido) ||
+                          (tipoEntidad == TipoAnomalia.Tulpa);
+
+        pesoMaximoMirada = tipoEntidad == TipoAnomalia.PureForm ? 0.72f :
+                           (modoFlawedSentado ? 0.65f : 0.55f);
+
+        ConfigurarMultiAimRigEnModelo(animadorActivo, usarAimRig);
+    }
+
+    private void ConfigurarMultiAimRigEnModelo(Animator anim, bool habilitar)
+    {
+        if (anim == null) return;
+
+        Transform rigExistente = anim.transform.Find("Rig_Mirada_VR");
+        if (!habilitar)
+        {
+            if (rigExistente != null)
+            {
+                Rig rOff = rigExistente.GetComponent<Rig>();
+                if (rOff != null) rOff.weight = 0f;
+            }
+            return;
+        }
+
+        Transform huesoCabeza = BuscarHuesoRecursivo(anim.transform, "mixamorig:Head");
+        if (huesoCabeza == null) return;
+
+        Transform objTarget = anim.transform.Find("Objetivo_Mirada_VR");
+        if (objTarget == null)
+        {
+            GameObject goTarget = new GameObject("Objetivo_Mirada_VR");
+            goTarget.layer = anim.gameObject.layer;
+            objTarget = goTarget.transform;
+            objTarget.SetParent(anim.transform, false);
+            objTarget.localPosition = new Vector3(0f, 1.6f, 2.0f);
+        }
+        nodoObjetivoMirada = objTarget;
+
+        GameObject goRig;
+        if (rigExistente == null)
+        {
+            goRig = new GameObject("Rig_Mirada_VR");
+            goRig.layer = anim.gameObject.layer;
+            goRig.transform.SetParent(anim.transform, false);
+        }
+        else
+        {
+            goRig = rigExistente.gameObject;
+        }
+
+        rigMiradaActiva = goRig.GetComponent<Rig>();
+        if (rigMiradaActiva == null)
+            rigMiradaActiva = goRig.AddComponent<Rig>();
+        rigMiradaActiva.weight = Application.isPlaying ? 0f : pesoMaximoMirada;
+
+        Transform aimNode = goRig.transform.Find("Aim_Cabeza");
+        GameObject goAim;
+        if (aimNode == null)
+        {
+            goAim = new GameObject("Aim_Cabeza");
+            goAim.layer = anim.gameObject.layer;
+            goAim.transform.SetParent(goRig.transform, false);
+        }
+        else
+        {
+            goAim = aimNode.gameObject;
+        }
+
+        MultiAimConstraint mac = goAim.GetComponent<MultiAimConstraint>();
+        if (mac == null)
+        {
+            mac = goAim.AddComponent<MultiAimConstraint>();
+            mac.Reset();
+        }
+
+        MultiAimConstraintData d = mac.data;
+        d.constrainedObject = huesoCabeza;
+        d.aimAxis = MultiAimConstraintData.Axis.Z;
+        d.upAxis = MultiAimConstraintData.Axis.Y;
+        d.worldUpType = MultiAimConstraintData.WorldUpType.SceneUp;
+        d.maintainOffset = true;
+        d.constrainedXAxis = true;
+        d.constrainedYAxis = true;
+        d.constrainedZAxis = false;
+        d.limits = new Vector2(-56f, 56f);
+
+        WeightedTransformArray sources = new WeightedTransformArray(0);
+        sources.Add(new WeightedTransform(nodoObjetivoMirada, 1f));
+        d.sourceObjects = sources;
+        mac.data = d;
+
+        RigBuilder rb = anim.GetComponent<RigBuilder>();
+        if (rb == null)
+            rb = anim.gameObject.AddComponent<RigBuilder>();
+
+        rb.layers.Clear();
+        rb.layers.Add(new RigLayer(rigMiradaActiva, true));
+
+        if (Application.isPlaying && anim.gameObject.activeInHierarchy)
+        {
+            rb.Build();
+        }
+    }
+
+    private static Transform BuscarHuesoRecursivo(Transform raiz, string nombreExacto)
+    {
+        if (raiz == null) return null;
+        if (raiz.name == nombreExacto) return raiz;
+        for (int i = 0; i < raiz.childCount; i++)
+        {
+            Transform enc = BuscarHuesoRecursivo(raiz.GetChild(i), nombreExacto);
+            if (enc != null) return enc;
+        }
+        return null;
+    }
+
+    private void ProgramarEstadoInicial()
+    {
+        if (animadorActivo == null || animadorActivo.runtimeAnimatorController == null) return;
+
+        indiceClipAnterior = -1;
+        switch (tipoEntidad)
+        {
+            case TipoAnomalia.Flawed:
+                if (modoFlawedSentado)
+                {
+                    CambiarAEstadoAleatorio(EstadosFlawedSentado, 0.05f);
+                    proximoCambioClip = Time.time + Random.Range(4.8f, 8.2f);
+                }
+                else
+                {
+                    // Empezar en postura inquietante base y luego alternar con Agony, LookingAround y TwitchStare
+                    animadorActivo.Play("BreathingIdle", 0, Random.Range(0f, 0.8f));
+                    indiceClipAnterior = 0;
+                    proximoCambioClip = Time.time + Random.Range(4.0f, 7.2f);
+                }
+                break;
+
+            case TipoAnomalia.PureForm:
+                if (modoPureFormEscondido)
+                {
+                    // Espejar en X según el lado de asomo para que siempre incline el torso hacia afuera del mueble
+                    float signoEscalaX = inclinacionAsomoZ < 0f ? -1f : 1f;
+                    transform.localScale = new Vector3(Mathf.Abs(escalaBaseLocal.x) * signoEscalaX, escalaBaseLocal.y, escalaBaseLocal.z);
+                    animadorActivo.Play("PeekCorner", 0, Random.Range(0f, 0.7f));
+                    proximoCambioClip = float.MaxValue;
+                }
+                else
+                {
+                    transform.localScale = escalaBaseLocal;
+                    CambiarAEstadoAleatorio(EstadosPureFormDirecto, 0.05f);
+                    proximoCambioClip = Time.time + Random.Range(4.5f, 8.0f);
+                }
+                break;
+
+            case TipoAnomalia.Preacher:
+                animadorActivo.Play("ClosetWhisper", 0, Random.Range(0f, 0.9f));
+                proximoCambioClip = float.MaxValue;
+                break;
+
+            case TipoAnomalia.Tulpa:
+                CambiarAEstadoAleatorio(EstadosTulpaEspejo, 0.05f);
+                proximoCambioClip = Time.time + Random.Range(4.2f, 7.5f);
+                break;
+        }
+    }
+
+    private void CambiarAEstadoAleatorio(string[] estados, float fadeSeg)
+    {
+        if (animadorActivo == null || estados == null || estados.Length == 0) return;
+
+        int elegido = Random.Range(0, estados.Length);
+        if (estados.Length > 1 && elegido == indiceClipAnterior)
+            elegido = (elegido + 1 + Random.Range(0, estados.Length - 1)) % estados.Length;
+
+        indiceClipAnterior = elegido;
+        animadorActivo.CrossFadeInFixedTime(estados[elegido], fadeSeg, 0);
+    }
+
     private void Update()
     {
         float t = Time.time + semillaAleatoria;
@@ -62,62 +337,94 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         if (camTransform == null && Camera.main != null)
             camTransform = Camera.main.transform;
 
-        // Evaluar espasmos de terror (twitching) sin generar basura en memoria
-        if (Time.time >= tiempoProximoEspasmo)
+        if (tipoEntidad == TipoAnomalia.Corpse)
         {
-            duracionEspasmoActual = Random.Range(0.07f, 0.18f);
-            tiempoProximoEspasmo = Time.time + Random.Range(1.1f, 3.4f);
-
-            float intensidad = (tipoEntidad == TipoAnomalia.Flawed || tipoEntidad == TipoAnomalia.Tulpa) ? 18f : 10f;
-            rotEspasmo = Quaternion.Euler(
-                Random.Range(-intensidad * 0.6f, intensidad * 0.6f),
-                Random.Range(-intensidad, intensidad),
-                Random.Range(-intensidad, intensidad)
-            );
-            offsetEspasmo = new Vector3(
-                Random.Range(-0.025f, 0.025f),
-                Random.Range(-0.015f, 0.025f),
-                Random.Range(-0.025f, 0.025f)
-            );
+            EvaluarEspasmoSimple();
+            AnimarCorpse(t, duracionEspasmoActual > 0f);
+            return;
         }
 
-        bool enEspasmo = duracionEspasmoActual > 0f;
-        if (enEspasmo)
-            duracionEspasmoActual -= Time.deltaTime;
+        // Actualizar objetivo de mirada de Animation Rigging hacia los ojos del jugador
+        ActualizarPesoRigMirada();
 
-        switch (tipoEntidad)
+        // Alternar clips esqueléticos de Mixamo + Custom de forma fluida
+        if (!enSecuenciaSitToStand && animadorActivo != null && animadorActivo.runtimeAnimatorController != null && Time.time >= proximoCambioClip)
         {
-            case TipoAnomalia.PureForm:
-                AnimarPureForm(t, enEspasmo);
-                break;
+            if (tipoEntidad == TipoAnomalia.Flawed)
+            {
+                if (modoFlawedSentado)
+                {
+                    CambiarAEstadoAleatorio(EstadosFlawedSentado, 0.42f);
+                    proximoCambioClip = Time.time + Random.Range(5.0f, 8.8f);
+                }
+                else
+                {
+                    CambiarAEstadoAleatorio(EstadosFlawedPie, 0.38f);
+                    // Agony es más intenso y breve; los estados de respiración/acecho duran un poco más
+                    bool esAgonia = indiceClipAnterior == 4;
+                    proximoCambioClip = Time.time + (esAgonia ? Random.Range(3.2f, 4.4f) : Random.Range(4.6f, 8.2f));
+                }
+            }
+            else if (tipoEntidad == TipoAnomalia.PureForm && !modoPureFormEscondido)
+            {
+                CambiarAEstadoAleatorio(EstadosPureFormDirecto, 0.40f);
+                proximoCambioClip = Time.time + Random.Range(4.5f, 8.0f);
+            }
+            else if (tipoEntidad == TipoAnomalia.Tulpa)
+            {
+                CambiarAEstadoAleatorio(EstadosTulpaEspejo, 0.42f);
+                proximoCambioClip = Time.time + Random.Range(4.2f, 7.6f);
+            }
+        }
 
-            case TipoAnomalia.Preacher:
-                AnimarPreacher(t, enEspasmo);
-                break;
-
-            case TipoAnomalia.Flawed:
-                AnimarFlawed(t, enEspasmo);
-                break;
-
-            case TipoAnomalia.Tulpa:
-                AnimarTulpa(t, enEspasmo);
-                break;
-
-            case TipoAnomalia.Corpse:
-                AnimarCorpse(t, enEspasmo);
-                break;
+        // Comportamiento espacial contextual según entidad
+        if (tipoEntidad == TipoAnomalia.PureForm)
+        {
+            ActualizarComportamientoPureForm(t);
+        }
+        else if (tipoEntidad == TipoAnomalia.Flawed)
+        {
+            if (!modoFlawedSentado && mirarAlJugador)
+            {
+                // De pie: gira muy lentamente el cuerpo hacia donde camina el jugador (en sentado permanece fijo en la silla!)
+                OrientarCuerpoLentoHaciaJugador(1.65f);
+            }
         }
     }
 
-    private void AnimarPureForm(float t, bool enEspasmo)
+    private void ActualizarPesoRigMirada()
     {
-        float resp = 1f + Mathf.Sin(t * 2.1f) * 0.016f;
-        transform.localScale = new Vector3(escalaBaseLocal.x * resp, escalaBaseLocal.y, escalaBaseLocal.z * resp);
+        if (rigMiradaActiva == null || camTransform == null) return;
 
+        if (nodoObjetivoMirada != null)
+            nodoObjetivoMirada.position = camTransform.position;
+
+        float metaPeso = 0f;
+        if (!enSecuenciaSitToStand)
+        {
+            Vector3 haciaJugador = camTransform.position - (transform.position + Vector3.up * 1.45f);
+            float dist = haciaJugador.magnitude;
+            if (dist > 0.35f && dist < 8.5f)
+            {
+                float dot = Vector3.Dot(transform.forward, haciaJugador / dist);
+                if (dot > 0.05f || tipoEntidad == TipoAnomalia.Tulpa)
+                {
+                    // Reducir el aim durante Agony para no pelear con el retorcimiento completo de cabeza
+                    bool enAgonia = (tipoEntidad == TipoAnomalia.Flawed && !modoFlawedSentado && indiceClipAnterior == 4) ||
+                                    (tipoEntidad == TipoAnomalia.Tulpa && indiceClipAnterior == 3);
+                    metaPeso = enAgonia ? 0.15f : pesoMaximoMirada;
+                }
+            }
+        }
+
+        rigMiradaActiva.weight = Mathf.MoveTowards(rigMiradaActiva.weight, metaPeso, Time.deltaTime * 2.2f);
+    }
+
+    private void ActualizarComportamientoPureForm(float t)
+    {
         if (modoPureFormEscondido)
         {
-            // Variante Acechador / Escondido: asomado detrás de muebles/marcos con inclinación lateral;
-            // si el jugador cruza miradas con él, se retrae sutilmente hacia su escondite.
+            // Variante escondida: asomado detrás de un mueble/marco; si el jugador cruza miradas con él, se retrae sutilmente
             bool jugadorLoMira = false;
             if (camTransform != null)
             {
@@ -138,75 +445,50 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
                 tiempoMiradoAcecho = Mathf.Max(0f, tiempoMiradoAcecho - Time.deltaTime * 0.7f);
 
             float metaRetraccion = tiempoMiradoAcecho > 0.65f ? 1f : 0f;
-            factorRetraccionAcecho = Mathf.MoveTowards(factorRetraccionAcecho, metaRetraccion, Time.deltaTime * 1.35f);
+            factorRetraccionAcecho = Mathf.MoveTowards(factorRetraccionAcecho, metaRetraccion, Time.deltaTime * 1.4f);
 
-            Vector3 microVaiven = new Vector3(Mathf.Sin(t * 1.1f) * 0.012f, Mathf.Sin(t * 1.7f) * 0.008f, 0f);
-            transform.localPosition = posBaseLocal + Vector3.Lerp(Vector3.zero, offsetRetraccionLocal, factorRetraccionAcecho) + microVaiven;
-
-            float anguloAsomoActual = Mathf.Lerp(inclinacionAsomoZ, inclinacionAsomoZ * 0.32f, factorRetraccionAcecho) + Mathf.Sin(t * 1.2f) * 1.5f;
-            OrientarSutilmenteHaciaJugador(2.2f, false, anguloAsomoActual);
+            transform.localPosition = posBaseLocal + Vector3.Lerp(Vector3.zero, offsetRetraccionLocal, factorRetraccionAcecho);
+            OrientarCuerpoLentoHaciaJugador(2.1f);
         }
         else
         {
-            // Variante Directa / Confrontacional: erguido e imponente frente al jugador, mirándolo fijamente
-            float derivaY = Mathf.Sin(t * 1.8f) * 0.012f;
-            float vaivenX = Mathf.Cos(t * 1.1f) * 0.018f;
-            transform.localPosition = posBaseLocal + new Vector3(vaivenX, derivaY, 0f) + (enEspasmo ? offsetEspasmo * 0.5f : Vector3.zero);
-
-            OrientarSutilmenteHaciaJugador(2.6f, enEspasmo, Mathf.Sin(t * 1.3f) * 2.2f);
+            transform.localPosition = posBaseLocal;
+            OrientarCuerpoLentoHaciaJugador(2.6f);
         }
     }
 
-    private void AnimarPreacher(float t, bool enEspasmo)
+    private void OrientarCuerpoLentoHaciaJugador(float velocidadGiro)
     {
-        // Monje inquietante y sigiloso: respiración muy lenta y leve balanceo fluido (sin sacudidas toscas)
-        float resp = 1f + Mathf.Sin(t * 1.15f) * 0.014f;
-        transform.localScale = new Vector3(escalaBaseLocal.x * resp, escalaBaseLocal.y, escalaBaseLocal.z * resp);
+        if (!mirarAlJugador || camTransform == null) return;
 
-        float derivaY = Mathf.Sin(t * 1.15f) * 0.006f;
-        transform.localPosition = posBaseLocal + new Vector3(0f, derivaY, 0f);
-
-        float rezoPitch = Mathf.Sin(t * 0.75f) * 2.2f;
-        float giroYaw   = Mathf.Sin(t * 0.45f) * 2.6f;
-        float ladeadoZ  = Mathf.Cos(t * 0.60f) * 1.4f;
-        Quaternion objetivo = rotBaseLocal * Quaternion.Euler(rezoPitch, giroYaw, ladeadoZ);
-        transform.localRotation = Quaternion.Slerp(transform.localRotation, objetivo, Time.deltaTime * 3.5f);
+        Vector3 dirMundial = camTransform.position - transform.position;
+        dirMundial.y = 0f;
+        if (dirMundial.sqrMagnitude > 0.04f)
+        {
+            Quaternion rotDeseada = Quaternion.LookRotation(dirMundial.normalized, Vector3.up);
+            transform.rotation = Quaternion.Slerp(transform.rotation, rotDeseada, Time.deltaTime * velocidadGiro);
+        }
     }
 
-    private void AnimarFlawed(float t, bool enEspasmo)
+    private void EvaluarEspasmoSimple()
     {
-        // Humanoide anómalo (Alternate Watch): quietud humana inquietante + respiración orgánica sutil + micro-espasmos bruscos ocasionales
-        float resp = 1f + Mathf.Sin(t * 1.9f) * 0.011f;
-        transform.localScale = new Vector3(escalaBaseLocal.x * resp, escalaBaseLocal.y, escalaBaseLocal.z * resp);
-
-        float balanceoSutil = Mathf.Sin(t * 0.95f) * 0.014f;
-        transform.localPosition = posBaseLocal + new Vector3(balanceoSutil, 0f, 0f) + (enEspasmo ? offsetEspasmo * 1.15f : Vector3.zero);
-
-        OrientarSutilmenteHaciaJugador(2.4f, enEspasmo, Mathf.Sin(t * 0.85f) * 2.2f);
-    }
-
-    private void AnimarTulpa(float t, bool enEspasmo)
-    {
-        // Espíritu del espejo: oscilación etérea y cabeza ladeada observando desde el reflejo
-        float flotar = Mathf.Sin(t * 2.4f) * 0.04f;
-        float deriva = Mathf.Sin(t * 1.6f) * 0.035f;
-        transform.localPosition = posBaseLocal + new Vector3(deriva, flotar, 0f) + (enEspasmo ? offsetEspasmo : Vector3.zero);
-
-        float resp = 1f + Mathf.Sin(t * 3.0f) * 0.022f;
-        transform.localScale = new Vector3(escalaBaseLocal.x * resp, escalaBaseLocal.y, escalaBaseLocal.z * resp);
-
-        Quaternion ladeado = Quaternion.Euler(Mathf.Sin(t * 1.8f) * 4f, Mathf.Cos(t * 1.4f) * 7f, Mathf.Sin(t * 2.1f) * 8f);
-        transform.localRotation = rotBaseLocal * ladeado * (enEspasmo ? rotEspasmo : Quaternion.identity);
+        if (Time.time >= tiempoProximoEspasmo)
+        {
+            duracionEspasmoActual = Random.Range(0.07f, 0.16f);
+            tiempoProximoEspasmo = Time.time + Random.Range(2.4f, 5.2f);
+            rotEspasmo = Quaternion.Euler(Random.Range(-0.8f, 0.8f), Random.Range(-1.0f, 1.0f), Random.Range(-0.8f, 0.8f));
+        }
+        if (duracionEspasmoActual > 0f)
+            duracionEspasmoActual -= Time.deltaTime;
     }
 
     private void AnimarCorpse(float t, bool enEspasmo)
     {
         transform.localScale = escalaBaseLocal;
+        transform.localPosition = posBaseLocal;
 
         if (modoCorpse == ModoCorpseContextual.Colgado)
         {
-            // Cadáver colgado del techo: balanceo pendular lento e inquietante desde el anclaje superior de la cuerda
-            transform.localPosition = posBaseLocal;
             float penduloX = Mathf.Sin(t * 1.05f) * 2.1f;
             float penduloZ = Mathf.Cos(t * 0.88f) * 1.8f;
             float torsionCuerdaY = Mathf.Sin(t * 0.42f) * 7.5f;
@@ -214,32 +496,7 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         }
         else
         {
-            // Cadáver acostado (en cama, suelo o bañera): inerte y realista, con rarísimo micro-espasmo post-mortem
-            transform.localPosition = posBaseLocal;
-            Quaternion microRigidez = enEspasmo
-                ? Quaternion.Euler(Random.Range(-0.8f, 0.8f), Random.Range(-1.0f, 1.0f), Random.Range(-0.8f, 0.8f))
-                : Quaternion.identity;
-            transform.localRotation = rotBaseLocal * microRigidez;
+            transform.localRotation = rotBaseLocal * (enEspasmo ? rotEspasmo : Quaternion.identity);
         }
-    }
-
-    private void OrientarSutilmenteHaciaJugador(float velocidadGiro, bool enEspasmo, float ladeadoZ)
-    {
-        if (mirarAlJugador && camTransform != null && transform.parent != null)
-        {
-            Vector3 dirMundial = camTransform.position - transform.position;
-            dirMundial.y = 0f;
-            if (dirMundial.sqrMagnitude > 0.04f)
-            {
-                Quaternion rotDeseadaMundial = Quaternion.LookRotation(dirMundial.normalized, Vector3.up) * Quaternion.Euler(0f, 0f, ladeadoZ);
-                if (enEspasmo)
-                    rotDeseadaMundial *= rotEspasmo;
-                transform.rotation = Quaternion.Slerp(transform.rotation, rotDeseadaMundial, Time.deltaTime * velocidadGiro);
-                return;
-            }
-        }
-
-        Quaternion oscilacion = Quaternion.Euler(0f, Mathf.Sin(Time.time * 1.5f) * 8f, ladeadoZ);
-        transform.localRotation = rotBaseLocal * oscilacion * (enEspasmo ? rotEspasmo : Quaternion.identity);
     }
 }

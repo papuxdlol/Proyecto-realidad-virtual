@@ -104,12 +104,36 @@ public class ObjetoAnomalia : MonoBehaviour
         public float offsetColchonY;
     }
 
+    private struct InfoAsientoCasa
+    {
+        public string cuarto;
+        public Vector3 posPisoFrenteAsiento;
+        public Quaternion rotSentado;
+    }
+
     private static bool cacheMueblesContextualesListo = false;
     private static readonly Dictionary<string, InfoCamaCasa> cacheCamasPorCuarto = new Dictionary<string, InfoCamaCasa>(System.StringComparer.OrdinalIgnoreCase);
+    private static readonly List<InfoAsientoCasa> cacheAsientosFlawed = new List<InfoAsientoCasa>();
     private static MeshRenderer cacheBathtubCasaArriba;
     private static readonly Dictionary<string, MeshRenderer> cacheCoberturaPureForm = new Dictionary<string, MeshRenderer>(System.StringComparer.OrdinalIgnoreCase);
 
     private MeshRenderer bathtubCasaOcultadaPorCorpse;
+    private bool flawedSentadoActivoActual = false;
+
+    public bool EsFlawedSentadoActivo()
+    {
+        return estaActiva && tipoActivoActual == TipoAnomalia.Flawed && flawedSentadoActivoActual;
+    }
+
+    public void DispararSitToStandPorReporte()
+    {
+        if (!EsFlawedSentadoActivo()) return;
+        Transform vis = transform.Find("Modelo_Visual_(Reemplazar_Por_FBX)");
+        if (vis == null) return;
+        AnimadorEntidadTerror anim = vis.GetComponent<AnimadorEntidadTerror>();
+        if (anim != null)
+            anim.DispararSitToStandPorReporte();
+    }
 
     private struct PuntoClosetPreacher
     {
@@ -363,6 +387,15 @@ public class ObjetoAnomalia : MonoBehaviour
 
     void Awake()
     {
+        // Escrituras en las paredes desactivadas definitivamente para evitar bugs visuales
+        if (gameObject.name.ToLowerInvariant().Contains("mensajepared"))
+        {
+            estaActiva = false;
+            if (posiblesVariantes != null) posiblesVariantes.Clear();
+            gameObject.SetActive(false);
+            return;
+        }
+
         AutoRepararGeometriaYReferencias();
 
         miRenderer = GetComponent<MeshRenderer>();
@@ -1049,17 +1082,45 @@ public class ObjetoAnomalia : MonoBehaviour
                tipo == TipoAnomalia.Corpse;
     }
 
+    public static bool PuntoVisibleOMismoCuartoJugador(Transform cam, Vector3 punto, string cuartoCandidato)
+    {
+        if (cam == null) return false;
+
+        string cuartoJugador = NormalizarCuartoPorPosicion(cam.position, "LivingRoom");
+        if (!string.IsNullOrEmpty(cuartoCandidato) &&
+            string.Equals(cuartoCandidato.Trim(), cuartoJugador, System.StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Mismo piso: verificar si el jugador tiene el punto dentro de su cono de visión y con línea de visión libre
+        if (Mathf.Abs(cam.position.y - punto.y) < 2.35f)
+        {
+            Vector3 puntoOjos = punto + Vector3.up * 1.15f;
+            Vector3 haciaPunto = puntoOjos - cam.position;
+            float dist = haciaPunto.magnitude;
+            if (dist < 2.8f) return true;
+            if (dist < 14f && Vector3.Angle(cam.forward, haciaPunto / dist) < 82f)
+            {
+                if (InteractorUniversalVR.TieneLineaDeVisionDirecta(cam.position, puntoOjos, null))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     private void ReubicarEntidadEnHabitacionAleatoria(TipoAnomalia tipo)
     {
         Transform cam = Camera.main != null ? Camera.main.transform : null;
+        flawedSentadoActivoActual = false;
 
-        // Restricción estricta para el Monje (Preacher): SOLO aparece en habitaciones con Closets y DENTRO/JUNTO al closet
+        // Restricción estricta para el Monje (Preacher): SOLO aparece en habitaciones con Closets y fuera de la vista del jugador
         if (tipo == TipoAnomalia.Preacher)
         {
             List<PuntoClosetPreacher> closetsDisponibles = new List<PuntoClosetPreacher>();
             for (int i = 0; i < PuntosClosetsPreacher.Length; i++)
             {
-                if (cam == null || Vector3.Distance(cam.position, PuntosClosetsPreacher[i].posEnCloset) > 3.0f)
+                if (!PuntoVisibleOMismoCuartoJugador(cam, PuntosClosetsPreacher[i].posEnCloset, PuntosClosetsPreacher[i].cuarto))
                     closetsDisponibles.Add(PuntosClosetsPreacher[i]);
             }
             if (closetsDisponibles.Count == 0)
@@ -1122,18 +1183,74 @@ public class ObjetoAnomalia : MonoBehaviour
 
         if (tipo == TipoAnomalia.Flawed)
         {
+            InicializarCacheMueblesContextuales();
             Transform visualFlawed = transform.Find("Modelo_Visual_(Reemplazar_Por_FBX)");
-            if (visualFlawed != null)
+            int idxElegido = 0;
+            bool elegirSentado = false;
+            bool elegirEspaldas = false;
+
+            if (visualFlawed != null && visualFlawed.childCount > 0)
             {
                 visualFlawed.localPosition = Vector3.zero;
                 visualFlawed.localRotation = Quaternion.identity;
                 visualFlawed.localScale = Vector3.one;
-                if (visualFlawed.childCount > 1)
-                    ElegirUnicoHijoAleatorio(visualFlawed);
+
+                idxElegido = Random.Range(0, visualFlawed.childCount);
+                for (int i = 0; i < visualFlawed.childCount; i++)
+                {
+                    GameObject ch = visualFlawed.GetChild(i).gameObject;
+                    bool activo = (i == idxElegido);
+                    ch.SetActive(activo);
+                    if (activo)
+                    {
+                        // Variante 3 = Flawed_04_HombreTraje (SIEMPRE sentado en sofá/sillón/silla real como en el juego original!)
+                        // Variante 4 = Flawed_05_CabezaGirada (cuerpo de espaldas con cabeza girada 180°)
+                        elegirSentado = (i == 3) || ch.name.ToLowerInvariant().Contains("traje");
+                        elegirEspaldas = (i == 4) || ch.name.ToLowerInvariant().Contains("cabezagirada");
+                    }
+                }
                 AplicarMaterialesMateFlawed(visualFlawed);
+            }
+
+            // Si salió el Hombre de Traje (Flawed_04), sentarlo sobre una silla, sillón o sofá real fuera de la vista del jugador
+            if (elegirSentado && cacheAsientosFlawed.Count > 0)
+            {
+                List<InfoAsientoCasa> asientosLibres = new List<InfoAsientoCasa>();
+                for (int i = 0; i < cacheAsientosFlawed.Count; i++)
+                {
+                    if (!PuntoVisibleOMismoCuartoJugador(cam, cacheAsientosFlawed[i].posPisoFrenteAsiento, cacheAsientosFlawed[i].cuarto))
+                        asientosLibres.Add(cacheAsientosFlawed[i]);
+                }
+                if (asientosLibres.Count == 0)
+                    asientosLibres.AddRange(cacheAsientosFlawed);
+
+                InfoAsientoCasa asiento = asientosLibres[Random.Range(0, asientosLibres.Count)];
+                nombreCuarto = asiento.cuarto;
+                flawedSentadoActivoActual = true;
+
+                transform.position = asiento.posPisoFrenteAsiento;
+                transform.rotation = asiento.rotSentado;
+
+                if (visualFlawed != null)
+                {
+                    AnimadorEntidadTerror animFlawed = visualFlawed.GetComponent<AnimadorEntidadTerror>();
+                    if (animFlawed != null)
+                    {
+                        animFlawed.GuardarTransformBase();
+                        animFlawed.ConfigurarModoVarianteFlawed(true, false);
+                    }
+                }
+                return;
+            }
+
+            if (visualFlawed != null)
+            {
                 AnimadorEntidadTerror animFlawed = visualFlawed.GetComponent<AnimadorEntidadTerror>();
                 if (animFlawed != null)
+                {
                     animFlawed.GuardarTransformBase();
+                    animFlawed.ConfigurarModoVarianteFlawed(false, elegirEspaldas);
+                }
             }
         }
 
@@ -1142,8 +1259,7 @@ public class ObjetoAnomalia : MonoBehaviour
         for (int i = 0; i < PuntosHabitaciones.Length; i++)
         {
             PuntoAparicionCuarto p = PuntosHabitaciones[i];
-            Vector3 destino = p.posCentro;
-            if (cam == null || Vector3.Distance(cam.position, destino) > 3.2f)
+            if (!PuntoVisibleOMismoCuartoJugador(cam, p.posCentro, p.cuarto))
                 candidatos.Add(p);
         }
 
@@ -1164,7 +1280,11 @@ public class ObjetoAnomalia : MonoBehaviour
         }
 
         transform.position = new Vector3(posElegida.x, alturaPiso, posElegida.z);
-        transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+        Vector3 mirarCentro = cam != null ? (cam.position - transform.position) : Vector3.forward;
+        mirarCentro.y = 0f;
+        transform.rotation = mirarCentro.sqrMagnitude > 0.01f
+            ? Quaternion.LookRotation(mirarCentro.normalized, Vector3.up)
+            : Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
     }
 
     private static void InicializarCacheMueblesContextuales()
@@ -1172,6 +1292,7 @@ public class ObjetoAnomalia : MonoBehaviour
         if (cacheMueblesContextualesListo && cacheCamasPorCuarto.Count > 0) return;
 
         cacheCamasPorCuarto.Clear();
+        cacheAsientosFlawed.Clear();
         cacheCoberturaPureForm.Clear();
         cacheBathtubCasaArriba = null;
 
@@ -1186,6 +1307,55 @@ public class ObjetoAnomalia : MonoBehaviour
 
             Bounds b = mr.bounds;
             string cuartoMueble = NormalizarCuartoPorPosicion(b.center, "");
+
+            // Detectar sillones y sillas interiores reales (Sala, Cocina/Comedor y Recámaras) para el Hombre de Traje sentado
+            bool esSillonSala = (nl == "armchair_15.001" || nl == "armchair_17.001") && cuartoMueble == "LivingRoom";
+            bool esSillaInterior = (nl == "chair_01" || nl == "chair_02" || nl == "chair_03" || nl == "chair_04" || nl == "chair_11") &&
+                                   (cuartoMueble == "Kitchen" || cuartoMueble == "LivingRoom" || cuartoMueble.StartsWith("Bedroom"));
+            if (esSillonSala || esSillaInterior)
+            {
+                MeshFilter mf = mr.GetComponent<MeshFilter>();
+                if (mf != null && mf.sharedMesh != null)
+                {
+                    Vector3[] vs = mf.sharedMesh.vertices;
+                    Transform tr = mr.transform;
+                    float umbralRespaldoY = b.min.y + 0.68f * b.size.y;
+                    Vector3 sumaRespaldo = Vector3.zero;
+                    int cntRespaldo = 0;
+                    int paso = Mathf.Max(1, vs.Length / 250);
+                    for (int iv = 0; iv < vs.Length; iv += paso)
+                    {
+                        Vector3 wp = tr.TransformPoint(vs[iv]);
+                        if (wp.y > umbralRespaldoY)
+                        {
+                            sumaRespaldo += wp;
+                            cntRespaldo++;
+                        }
+                    }
+
+                    Vector3 dirFrente = Vector3.forward;
+                    if (cntRespaldo > 0)
+                    {
+                        Vector3 promRespaldo = sumaRespaldo / cntRespaldo;
+                        dirFrente = new Vector3(b.center.x - promRespaldo.x, 0f, b.center.z - promRespaldo.z);
+                    }
+                    if (dirFrente.sqrMagnitude < 0.001f)
+                        dirFrente = ObtenerCentroDeHabitacion(cuartoMueble) - b.center;
+                    dirFrente.y = 0f;
+                    dirFrente.Normalize();
+
+                    float pisoAsiento = b.min.y > 3.15f ? 3.74f : 0.41f;
+                    float avanceFrente = esSillonSala ? 0.18f : 0.14f;
+                    Vector3 posSentado = new Vector3(b.center.x, pisoAsiento, b.center.z) + dirFrente * avanceFrente;
+
+                    cacheAsientosFlawed.Add(new InfoAsientoCasa
+                    {
+                        cuarto = cuartoMueble,
+                        posPisoFrenteAsiento = posSentado,
+                        rotSentado = Quaternion.LookRotation(dirFrente, Vector3.up)
+                    });
+                }
+            }
 
             if (nl == "bed_01" || nl == "bed_02" || nl == "bed_03")
             {
@@ -1279,7 +1449,7 @@ public class ObjetoAnomalia : MonoBehaviour
                 ? cacheBathtubCasaArriba.bounds.center
                 : p.posCentro;
 
-            if (cam == null || Vector3.Distance(cam.position, refPos) > 3.2f)
+            if (!PuntoVisibleOMismoCuartoJugador(cam, refPos, p.cuarto))
                 candidatos.Add(p);
         }
 
@@ -1417,7 +1587,7 @@ public class ObjetoAnomalia : MonoBehaviour
         List<PuntoAparicionCuarto> candidatos = new List<PuntoAparicionCuarto>();
         for (int i = 0; i < PuntosHabitaciones.Length; i++)
         {
-            if (cam == null || Vector3.Distance(cam.position, PuntosHabitaciones[i].posCentro) > 3.2f)
+            if (!PuntoVisibleOMismoCuartoJugador(cam, PuntosHabitaciones[i].posCentro, PuntosHabitaciones[i].cuarto))
                 candidatos.Add(PuntosHabitaciones[i]);
         }
         if (candidatos.Count == 0)
@@ -1486,6 +1656,7 @@ public class ObjetoAnomalia : MonoBehaviour
             anim.offsetRetraccionLocal = new Vector3(signoAsomo * -0.18f, -0.04f, -0.10f);
             anim.mirarAlJugador = true;
             anim.GuardarTransformBase();
+            anim.InicializarAnimatorYAnimationRigging();
         }
     }
 
@@ -1952,7 +2123,7 @@ public class ObjetoAnomalia : MonoBehaviour
         {
             if (PuntosHabitaciones[i].cuarto == "Bathroom" || PuntosHabitaciones[i].cuarto == "Laundry")
                 continue;
-            if (cam != null && Vector3.Distance(cam.position, PuntosHabitaciones[i].posCentro) < 3.6f)
+            if (PuntoVisibleOMismoCuartoJugador(cam, PuntosHabitaciones[i].posCentro, PuntosHabitaciones[i].cuarto))
                 continue;
             candidatos.Add(PuntosHabitaciones[i]);
         }
@@ -2042,6 +2213,7 @@ public class ObjetoAnomalia : MonoBehaviour
 
         VarianteAnomalia v = varianteActual;
         estaActiva = false;
+        flawedSentadoActivoActual = false;
         varianteActual = null;
         enLevitacionDisplacement = false;
 

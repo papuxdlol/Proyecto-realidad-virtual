@@ -2,6 +2,7 @@ using System.IO;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -13,7 +14,7 @@ using TMPro;
 [InitializeOnLoad]
 public class RepararPuertasVR : EditorWindow
 {
-    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v22.flag";
+    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v24.flag";
 
     static RepararPuertasVR()
     {
@@ -46,6 +47,7 @@ public class RepararPuertasVR : EditorWindow
         AssetDatabase.ImportAsset("Assets/Settings/Project Configuration/Performance URP Config.asset", ImportAssetOptions.ForceUpdate);
         AssetDatabase.ImportAsset("Assets/Settings/Project Configuration/Quality URP Config.asset", ImportAssetOptions.ForceUpdate);
         ConfigurarMaterialesUnlitPermanentesEnFBXGenerados();
+        ConfigurarAnimacionesMixamoYControladores();
 
         // Asegurar DecompressOnLoad en los 3 audios de pisadas para recorte instantáneo sin delay
         AsegurarAudioPisadasDecompressOnLoad();
@@ -108,6 +110,21 @@ public class RepararPuertasVR : EditorWindow
             if (n == "hitbox_vr" || n == "luz_real_cuarto")
             {
                 Undo.DestroyObjectImmediate(t.gameObject);
+                continue;
+            }
+
+            if (n.Contains("mensajepared"))
+            {
+                ObjetoAnomalia anomPared = t.GetComponent<ObjetoAnomalia>();
+                if (anomPared != null)
+                {
+                    Undo.RecordObject(anomPared, "Desactivar Escritura Pared");
+                    anomPared.estaActiva = false;
+                    if (anomPared.posiblesVariantes != null) anomPared.posiblesVariantes.Clear();
+                    EditorUtility.SetDirty(anomPared);
+                }
+                Undo.RecordObject(t.gameObject, "Ocultar Escritura Pared");
+                t.gameObject.SetActive(false);
                 continue;
             }
 
@@ -326,11 +343,11 @@ public class RepararPuertasVR : EditorWindow
             Undo.RecordObject(tension, "Asignar Audios Tension y Paranoia VR");
             AudioClip clipLatido = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_latido_corazon.wav");
             AudioClip clipViento = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-wind-ambience-14720.mp3");
-            AudioClip clipCrujido = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-squeaky-bathroom-door-102756.mp3");
             AudioClip clipGolpe = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/soumages-walking-on-wood-363349.mp3");
             if (clipLatido != null) tension.clipLatidoCorazon = clipLatido;
             if (clipViento != null) tension.clipVientoVentana = clipViento;
-            if (clipCrujido != null) tension.clipCrujidoMadera = clipCrujido;
+            // NUNCA asignar audio de abrir puerta a paranoia ambiental para evitar falsas alarmas de puerta
+            tension.clipCrujidoMadera = null;
             if (clipGolpe != null) tension.clipGolpeMadera = clipGolpe;
             EditorUtility.SetDirty(tension);
         }
@@ -345,6 +362,30 @@ public class RepararPuertasVR : EditorWindow
         }
         if (finalTurno != null)
         {
+            string[] rutasDeathScreenWav = {
+                "Assets/Model/sonido/sfx_deathscreen_vhs_alarm.wav",
+                "Assets/Model/sonido/sfx_deathscreen_flatline.wav"
+            };
+            foreach (string rutaWav in rutasDeathScreenWav)
+            {
+                if (!File.Exists(rutaWav)) continue;
+                AssetDatabase.ImportAsset(rutaWav, ImportAssetOptions.ForceUpdate);
+                AudioImporter ai = AssetImporter.GetAtPath(rutaWav) as AudioImporter;
+                if (ai != null)
+                {
+                    AudioImporterSampleSettings s = ai.defaultSampleSettings;
+                    if (s.loadType != AudioClipLoadType.DecompressOnLoad || s.compressionFormat != AudioCompressionFormat.PCM || ai.forceToMono)
+                    {
+                        ai.forceToMono = false;
+                        ai.loadInBackground = false;
+                        s.loadType = AudioClipLoadType.DecompressOnLoad;
+                        s.compressionFormat = AudioCompressionFormat.PCM;
+                        ai.defaultSampleSettings = s;
+                        ai.SaveAndReimport();
+                    }
+                }
+            }
+
             Undo.RecordObject(finalTurno, "Asignar Audios Fase 3 FinalTurnoVR");
             AudioClip clipScream = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_screamer_anomalia.wav");
             AudioClip clipVhs = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_deathscreen_vhs_alarm.wav");
@@ -548,6 +589,8 @@ public class RepararPuertasVR : EditorWindow
         ModelImporter miPf = AssetImporter.GetAtPath("Assets/Model/Props/Generados/PureForm_Silueta.fbx") as ModelImporter;
         if (miPf != null)
         {
+            miPf.animationType = ModelImporterAnimationType.Human;
+            miPf.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
             miPf.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PF_Cuerpo"), matNegroVacio);
             miPf.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PF_Ojos"), matOjosPureForm);
             miPf.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PF_HaloOjos"), matOjosPureForm);
@@ -558,9 +601,27 @@ public class RepararPuertasVR : EditorWindow
         ModelImporter miPr = AssetImporter.GetAtPath("Assets/Model/Props/Generados/Preacher_Monje.fbx") as ModelImporter;
         if (miPr != null)
         {
+            miPr.animationType = ModelImporterAnimationType.Generic;
+            miPr.importAnimation = true;
+            ConfigurarLoopsEnModelImporter(miPr, true, false);
             miPr.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PR_Tunica"), matNegroVacio);
             miPr.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PR_Rostro"), matRostroPreacher);
             miPr.SaveAndReimport();
+        }
+
+        if (File.Exists("Assets/Model/Props/Generados/Tulpa_Rigged.fbx"))
+        {
+            Texture2D texTulpa = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/horror-ghost-character-blood-stained-spirit/textures/Horror_Ghost.png");
+            Material matTulpa = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Tulpa_Fantasma.mat", shLitMate, Color.white, texTulpa, null, 1f, 0.12f);
+            AssetDatabase.ImportAsset("Assets/Model/Props/Generados/Tulpa_Rigged.fbx", ImportAssetOptions.ForceUpdate);
+            ModelImporter miTu = AssetImporter.GetAtPath("Assets/Model/Props/Generados/Tulpa_Rigged.fbx") as ModelImporter;
+            if (miTu != null)
+            {
+                miTu.animationType = ModelImporterAnimationType.Human;
+                miTu.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
+                miTu.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "TU_Fantasma"), matTulpa);
+                miTu.SaveAndReimport();
+            }
         }
 
         string[] fbxFlawed = {
@@ -615,6 +676,19 @@ public class RepararPuertasVR : EditorWindow
             ModelImporter miFl = AssetImporter.GetAtPath(rutaFbxFl) as ModelImporter;
             if (miFl != null)
             {
+                bool esVentanaGeneric = rutaFbxFl.Contains("Flawed_06_Ventana");
+                if (esVentanaGeneric)
+                {
+                    miFl.animationType = ModelImporterAnimationType.Generic;
+                    miFl.importAnimation = true;
+                    ConfigurarLoopsEnModelImporter(miFl, true, false);
+                }
+                else
+                {
+                    miFl.animationType = ModelImporterAnimationType.Human;
+                    miFl.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
+                }
+
                 foreach (var par in mapaMatsFlawed)
                 {
                     if (par.mat != null)
@@ -623,6 +697,174 @@ public class RepararPuertasVR : EditorWindow
                 miFl.SaveAndReimport();
             }
         }
+    }
+
+    private static void ConfigurarLoopsEnModelImporter(ModelImporter mi, bool loop, bool esHumanoidLockRoot, bool bloquearAlturaY = true)
+    {
+        if (mi == null) return;
+        ModelImporterClipAnimation[] clips = mi.clipAnimations;
+        if (clips == null || clips.Length == 0)
+            clips = mi.defaultClipAnimations;
+        if (clips == null || clips.Length == 0) return;
+
+        for (int i = 0; i < clips.Length; i++)
+        {
+            clips[i].loopTime = loop;
+            clips[i].loopPose = loop;
+            if (esHumanoidLockRoot)
+            {
+                clips[i].lockRootRotation = true;
+                clips[i].lockRootPositionXZ = true;
+                clips[i].lockRootHeightY = bloquearAlturaY;
+                clips[i].keepOriginalOrientation = false;
+                clips[i].keepOriginalPositionXZ = false;
+                clips[i].keepOriginalPositionY = !bloquearAlturaY;
+            }
+        }
+        mi.clipAnimations = clips;
+    }
+
+    private static AnimationClip CargarClipDeFBX(string rutaFbx, string filtroNombre = null)
+    {
+        if (!File.Exists(rutaFbx)) return null;
+        Object[] subAssets = AssetDatabase.LoadAllAssetsAtPath(rutaFbx);
+        AnimationClip fallback = null;
+        for (int i = 0; i < subAssets.Length; i++)
+        {
+            AnimationClip c = subAssets[i] as AnimationClip;
+            if (c == null || c.name.StartsWith("__preview__")) continue;
+            if (fallback == null) fallback = c;
+            if (!string.IsNullOrEmpty(filtroNombre) && c.name.IndexOf(filtroNombre, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return c;
+        }
+        return fallback;
+    }
+
+    private static AnimatorController CrearControladorEstados(string rutaCtrl, (string estado, AnimationClip clip)[] estados)
+    {
+        Directory.CreateDirectory("Assets/Animations/Controllers");
+        if (File.Exists(rutaCtrl))
+            AssetDatabase.DeleteAsset(rutaCtrl);
+
+        AnimatorController ctrl = AnimatorController.CreateAnimatorControllerAtPath(rutaCtrl);
+        AnimatorStateMachine sm = ctrl.layers[0].stateMachine;
+
+        bool primero = true;
+        for (int i = 0; i < estados.Length; i++)
+        {
+            if (estados[i].clip == null) continue;
+            AnimatorState st = sm.AddState(estados[i].estado);
+            st.motion = estados[i].clip;
+            if (primero)
+            {
+                sm.defaultState = st;
+                primero = false;
+            }
+        }
+        EditorUtility.SetDirty(ctrl);
+        return ctrl;
+    }
+
+    private static void ConfigurarAnimacionesMixamoYControladores()
+    {
+        (string ruta, bool loop, bool lockY)[] clipsHumanoid = new (string, bool, bool)[]
+        {
+            ("Assets/Animations/Agony.fbx", true, true),
+            ("Assets/Animations/Breathing Idle.fbx", true, true),
+            ("Assets/Animations/Looking Around.fbx", true, true),
+            ("Assets/Animations/Mutant Breathing Idle.fbx", true, true),
+            ("Assets/Animations/Sit To Stand.fbx", false, false),
+            ("Assets/Animations/Sitting Disbelief.fbx", true, true),
+            ("Assets/Animations/Sitting Dodges.fbx", true, true),
+            ("Assets/Animations/Sitting Rubbing Arm.fbx", true, true),
+            ("Assets/Animations/Custom/Custom_Sitting_EerieIdle.fbx", true, true),
+            ("Assets/Animations/Custom/Custom_Flawed_TwitchStare.fbx", true, true),
+            ("Assets/Animations/Custom/Custom_PureForm_PeekCorner.fbx", true, true),
+            ("Assets/Animations/Custom/Custom_PureForm_StalkerSnap.fbx", true, true),
+            ("Assets/Animations/Custom/Custom_Tulpa_MirrorReach.fbx", true, true)
+        };
+
+        for (int i = 0; i < clipsHumanoid.Length; i++)
+        {
+            var item = clipsHumanoid[i];
+            if (!File.Exists(item.ruta)) continue;
+            AssetDatabase.ImportAsset(item.ruta, ImportAssetOptions.ForceUpdate);
+            ModelImporter mi = AssetImporter.GetAtPath(item.ruta) as ModelImporter;
+            if (mi != null)
+            {
+                mi.animationType = ModelImporterAnimationType.Human;
+                mi.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
+                mi.importAnimation = true;
+                ConfigurarLoopsEnModelImporter(mi, item.loop, true, item.lockY);
+                mi.SaveAndReimport();
+            }
+        }
+
+        AnimationClip cBreathing    = CargarClipDeFBX("Assets/Animations/Breathing Idle.fbx");
+        AnimationClip cMutant       = CargarClipDeFBX("Assets/Animations/Mutant Breathing Idle.fbx");
+        AnimationClip cLookAround   = CargarClipDeFBX("Assets/Animations/Looking Around.fbx");
+        AnimationClip cAgony        = CargarClipDeFBX("Assets/Animations/Agony.fbx");
+        AnimationClip cSitDisbelief = CargarClipDeFBX("Assets/Animations/Sitting Disbelief.fbx");
+        AnimationClip cSitDodges    = CargarClipDeFBX("Assets/Animations/Sitting Dodges.fbx");
+        AnimationClip cSitRubbing   = CargarClipDeFBX("Assets/Animations/Sitting Rubbing Arm.fbx");
+        AnimationClip cSitToStand   = CargarClipDeFBX("Assets/Animations/Sit To Stand.fbx");
+
+        AnimationClip cSitEerie     = CargarClipDeFBX("Assets/Animations/Custom/Custom_Sitting_EerieIdle.fbx");
+        AnimationClip cFlawedTwitch = CargarClipDeFBX("Assets/Animations/Custom/Custom_Flawed_TwitchStare.fbx");
+        AnimationClip cPfPeek       = CargarClipDeFBX("Assets/Animations/Custom/Custom_PureForm_PeekCorner.fbx");
+        AnimationClip cPfStalk      = CargarClipDeFBX("Assets/Animations/Custom/Custom_PureForm_StalkerSnap.fbx");
+        AnimationClip cTulpaReach   = CargarClipDeFBX("Assets/Animations/Custom/Custom_Tulpa_MirrorReach.fbx");
+
+        AnimationClip cWinStalk     = CargarClipDeFBX("Assets/Model/Props/Generados/Flawed_06_Ventana.fbx", "Window_Stalk");
+        AnimationClip cWinPress     = CargarClipDeFBX("Assets/Model/Props/Generados/Flawed_06_Ventana.fbx", "Window_Glass");
+        AnimationClip cPreacherWhis = CargarClipDeFBX("Assets/Model/Props/Generados/Preacher_Monje.fbx", "Preacher_Closet");
+
+        CrearControladorEstados("Assets/Animations/Controllers/AC_Flawed_Pie.controller", new[]
+        {
+            ("BreathingIdle",   cBreathing),
+            ("TwitchStare",     cFlawedTwitch ?? cBreathing),
+            ("MutantBreathing", cMutant ?? cBreathing),
+            ("LookingAround",   cLookAround ?? cBreathing),
+            ("Agony",           cAgony ?? cBreathing)
+        });
+
+        CrearControladorEstados("Assets/Animations/Controllers/AC_Flawed_Sentado.controller", new[]
+        {
+            ("SittingIdle",       cSitEerie ?? cSitDisbelief),
+            ("SittingDisbelief",  cSitDisbelief),
+            ("SittingRubbingArm", cSitRubbing ?? cSitDisbelief),
+            ("SittingDodges",     cSitDodges ?? cSitDisbelief),
+            ("SitToStand",        cSitToStand ?? cSitDisbelief)
+        });
+
+        CrearControladorEstados("Assets/Animations/Controllers/AC_Flawed_Ventana.controller", new[]
+        {
+            ("WindowStalk", cWinStalk),
+            ("WindowPress", cWinPress ?? cWinStalk)
+        });
+
+        CrearControladorEstados("Assets/Animations/Controllers/AC_PureForm.controller", new[]
+        {
+            ("MutantBreathing", cMutant ?? cBreathing),
+            ("StalkerSnap",     cPfStalk ?? cMutant),
+            ("BreathingIdle",   cBreathing),
+            ("PeekCorner",      cPfPeek ?? cBreathing)
+        });
+
+        CrearControladorEstados("Assets/Animations/Controllers/AC_Preacher.controller", new[]
+        {
+            ("ClosetWhisper", cPreacherWhis)
+        });
+
+        CrearControladorEstados("Assets/Animations/Controllers/AC_Tulpa.controller", new[]
+        {
+            ("BreathingIdle", cBreathing),
+            ("MirrorReach",   cTulpaReach ?? cBreathing),
+            ("LookingAround", cLookAround ?? cBreathing),
+            ("Agony",         cAgony ?? cBreathing)
+        });
+
+        AssetDatabase.SaveAssets();
     }
 
     private static Material CrearOActualizarMaterialMateLit(string rutaMat, Shader sh, Color colorBase, Texture2D tex, Texture2D normalTex = null, float bumpScale = 1.0f, float smoothness = 0.06f)
@@ -733,10 +975,13 @@ public class RepararPuertasVR : EditorWindow
             contador++;
         }
 
-        // 4. TULPA -> horror-ghost-character-blood-stained-spirit (creepy+ghost+girl+3d+model.fbx) + EspejoTulpaVR
+        // 4. TULPA -> Nuevo modelo riggeado Tulpa_Rigged.fbx (con esqueleto Mixamo Humanoid + textura Horror_Ghost.png + EspejoTulpaVR)
+        string rutaModeloTulpa = File.Exists("Assets/Model/Props/Generados/Tulpa_Rigged.fbx")
+            ? "Assets/Model/Props/Generados/Tulpa_Rigged.fbx"
+            : "Assets/Model/Props/horror-ghost-character-blood-stained-spirit/source/creepy+ghost+girl+3d+model.fbx";
         if (ReemplazarVisualEntidad(
             "Anomalia_Tulpa_EspejoBano",
-            "Assets/Model/Props/horror-ghost-character-blood-stained-spirit/source/creepy+ghost+girl+3d+model.fbx",
+            rutaModeloTulpa,
             "Assets/Model/Props/horror-ghost-character-blood-stained-spirit/textures/Horror_Ghost.png",
             null,
             TipoAnomalia.Tulpa,
@@ -813,6 +1058,9 @@ public class RepararPuertasVR : EditorWindow
         };
         float[] alturasVariantes = { 1.72f, 1.86f, 1.83f, 1.83f, 1.73f };
 
+        RuntimeAnimatorController ctrlPie = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>("Assets/Animations/Controllers/AC_Flawed_Pie.controller");
+        RuntimeAnimatorController ctrlSentado = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>("Assets/Animations/Controllers/AC_Flawed_Sentado.controller");
+
         int creadas = 0;
         for (int i = 0; i < rutasVariantes.Length; i++)
         {
@@ -823,12 +1071,22 @@ public class RepararPuertasVR : EditorWindow
             if (inst == null)
                 inst = Object.Instantiate(pf, visual);
 
-            inst.name = "Flawed_Variante_" + creadas;
+            bool esTrajeSentado = rutasVariantes[i].Contains("HombreTraje");
+            inst.name = esTrajeSentado
+                ? "Flawed_Variante_3_TrajeSentado"
+                : (rutasVariantes[i].Contains("CabezaGirada") ? "Flawed_Variante_4_CabezaGirada" : "Flawed_Variante_" + creadas);
             inst.transform.localPosition = Vector3.zero;
             inst.transform.localRotation = Quaternion.identity;
             inst.transform.localScale = Vector3.one;
 
             LimpiarFisicasYStaticRecursivo(inst);
+
+            Animator animComp = inst.GetComponentInChildren<Animator>(true);
+            if (animComp == null)
+                animComp = inst.AddComponent<Animator>();
+            animComp.runtimeAnimatorController = esTrajeSentado ? ctrlSentado : ctrlPie;
+            animComp.applyRootMotion = false;
+            animComp.cullingMode = AnimatorCullingMode.AlwaysAnimate;
 
             // Asegurar que el rostro mire hacia +Z local del contenedor visual (en CabezaGirada los zapatos apuntan de espaldas a propósito)
             Renderer rZap = null;
@@ -1163,7 +1421,22 @@ public class RepararPuertasVR : EditorWindow
         // Normalizar escala y apoyar el modelo sobre el suelo
         NormalizarTamanoYApoyarEnSuelo(ancla.transform, visual, instancia.transform, alturaDeseada, acostadoEnSuelo);
 
-        // Agregar AnimadorEntidadTerror para que no sea estático
+        // Vincular su AnimatorController esquelético (Mixamo + Custom)
+        string rutaCtrlEntidad = tipo == TipoAnomalia.PureForm ? "Assets/Animations/Controllers/AC_PureForm.controller" :
+                                 (tipo == TipoAnomalia.Preacher ? "Assets/Animations/Controllers/AC_Preacher.controller" :
+                                 (tipo == TipoAnomalia.Tulpa ? "Assets/Animations/Controllers/AC_Tulpa.controller" : null));
+        if (!string.IsNullOrEmpty(rutaCtrlEntidad))
+        {
+            RuntimeAnimatorController ctrlEnt = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(rutaCtrlEntidad);
+            Animator animInst = instancia.GetComponentInChildren<Animator>(true);
+            if (animInst == null)
+                animInst = instancia.AddComponent<Animator>();
+            animInst.runtimeAnimatorController = ctrlEnt;
+            animInst.applyRootMotion = false;
+            animInst.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+        }
+
+        // Agregar AnimadorEntidadTerror para que controle cambios de estado y Animation Rigging
         AnimadorEntidadTerror anim = visual.GetComponent<AnimadorEntidadTerror>();
         if (anim == null)
             anim = Undo.AddComponent<AnimadorEntidadTerror>(visual.gameObject);

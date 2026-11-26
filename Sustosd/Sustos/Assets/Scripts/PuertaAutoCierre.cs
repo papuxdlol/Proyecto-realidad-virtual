@@ -415,17 +415,9 @@ public class PuertaAutoCierre : MonoBehaviour
         abiertaPorAnomalia = true;
         entreabiertaPorPreacher = true;
         pendienteSonidoCierre = false;
-
-        if (audioPuerta != null)
-        {
-            AudioClip clipAnomalo = sonidoAbrirAnomalia != null ? sonidoAbrirAnomalia : sonidoAbrir;
-            if (clipAnomalo != null)
-            {
-                audioPuerta.Stop();
-                audioPuerta.pitch = 0.84f;
-                audioPuerta.PlayOneShot(clipAnomalo, 0.65f);
-            }
-        }
+        // Dejar la puerta del clóset ya entreabierta en silencio (sin rechinido de puerta Unknown) para no confundir con anomalía de puerta
+        anguloActual = anguloAbierta * 0.42f;
+        AplicarAnguloDesdeCerrada(anguloActual);
     }
 
     public bool CalcularPuntoAsomoPreacherDetrasDeRendija(Vector3 centroHabitacion, out Vector3 posPreacher, out float rotY)

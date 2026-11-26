@@ -188,6 +188,8 @@ public sealed class EspejoTulpaVR : MonoBehaviour
             clonTulpa.name = "Tulpa_Reflejo_Secundario";
             clonTulpa.transform.localPosition = new Vector3(0f, 0.14f, 1.48f);
             clonTulpa.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            foreach (Animator an in clonTulpa.GetComponentsInChildren<Animator>(true))
+                an.cullingMode = AnimatorCullingMode.AlwaysAnimate;
             AsignarCapaRecursiva(clonTulpa.transform, CapaSoloEspejo);
             esp.modeloTulpaReflejado = clonTulpa;
         }

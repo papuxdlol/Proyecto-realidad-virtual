@@ -10,8 +10,8 @@ using UnityEngine.XR.Interaction.Toolkit.UI;
 
 /// <summary>
 /// Fase 3 — Sistema de Fin de Turno (Derrota con Screamer + Death Screen 1:1 estilo Graveyard Shift at Freddy's
-/// con fuente de terror VHS, glitch constante en texto/retrato y aislamiento total de cámara para que ni muebles
-/// ni la Tablet tapen la pantalla; más Pantalla de Victoria a las 06:00 AM).
+/// con audio real de alarma VHS + flatline, encuadre close-up de rostro sobre negro puro, aberración cromática RGB,
+/// cortes de cinta analógica y aislamiento total de cámara; más Pantalla de Victoria a las 06:00 AM).
 /// </summary>
 public class FinalTurnoVR : MonoBehaviour
 {
@@ -37,17 +37,25 @@ public class FinalTurnoVR : MonoBehaviour
 
     private AudioSource fuenteAudioFinal;
     private Canvas canvasFinal;
+    private GraphicRaycaster raycasterCanvas;
+    private TrackedDeviceGraphicRaycaster raycasterXRCanvas;
+
     private RawImage imgRetratoVHS;
     private RawImage imgScanlinesVHS;
     private Text txtMonologoDeathScreen;
-    private Text txtMonologoSombraGlitch;
+    private Text txtMonologoCanalAzul;
+    private Text txtMonologoCanalRojo;
     private RectTransform rectMonologoDeathScreen;
-    private RectTransform rectMonologoSombra;
+    private RectTransform rectMonologoAzul;
+    private RectTransform rectMonologoRojo;
     private RectTransform barraTrackingVHS;
+    private Image imgBarraTracking;
+
     private GameObject panelBotonesDerrota;
     private GameObject panelVictoria;
     private string textoMonologoBase = "";
 
+    private readonly List<Texture2D> texturasTemporalesVHS = new List<Texture2D>();
     private Coroutine rutinaSecuencia;
 
     void Awake()
@@ -71,11 +79,22 @@ public class FinalTurnoVR : MonoBehaviour
 
     void OnDestroy()
     {
+        LimpiarTexturasTemporalesVHS();
         if (Instancia == this)
         {
             EstaEnSecuenciaFinal = false;
             Instancia = null;
         }
+    }
+
+    private void LimpiarTexturasTemporalesVHS()
+    {
+        for (int i = 0; i < texturasTemporalesVHS.Count; i++)
+        {
+            if (texturasTemporalesVHS[i] != null)
+                Destroy(texturasTemporalesVHS[i]);
+        }
+        texturasTemporalesVHS.Clear();
     }
 
     void Update()
@@ -146,12 +165,14 @@ public class FinalTurnoVR : MonoBehaviour
     }
 
     // =========================================================================
-    // SECUENCIA 1:1 — SCREAMER + DEATH SCREEN VHS CON GLITCH CONSTANTE
+    // SECUENCIA 1:1 — SCREAMER + DEATH SCREEN VHS ANALÓGICA CON CORTES Y FLATLINE
     // =========================================================================
     private IEnumerator RutinaScreamerYDeathScreen(TipoAnomalia entidadAtacante, string motivoDerrota)
     {
         Camera cam = Camera.main != null ? Camera.main : FindAnyObjectByType<Camera>();
         SilenciarAudiosDeLaCasa();
+        DeshabilitarRayosUIDuranteCinematica();
+        LimpiarTexturasTemporalesVHS();
 
         // Ocultar la Tablet durante la secuencia final para que nunca se atraviese frente a la cámara
         if (TabletSistemaVR.Instancia != null)
@@ -164,17 +185,16 @@ public class FinalTurnoVR : MonoBehaviour
             cam.transform.localEulerAngles = new Vector3(0f, eul.y, 0f);
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = Color.black;
-            // Aislar la cámara en la capa del Screamer para que salga de la oscuridad pura sin que el sofá ni los controles lo tapen
             cam.cullingMask = (1 << CapaScreamer);
         }
 
-        // 1. Instanciar el modelo 3D de la anomalía en la capa exclusiva del Screamer, encuadrando rostro y torso
+        // 1. Instanciar el modelo 3D de la anomalía en la capa exclusiva del Screamer encuadrando su rostro
         GameObject modeloScreamer = InstanciarModeloEntidadParaScreamer(entidadAtacante, cam != null ? cam.transform : transform);
 
-        // Capturar retrato VHS en blanco y negro de altísimo contraste de esta misma entidad
-        Texture2D texturaRetratoVHS = CapturarRetratoVHSPosterizado(modeloScreamer, entidadAtacante);
+        // Capturar 4 frames VHS posterizados con desgarros analógicos reales del ROSTRO sobre negro puro (#000000)
+        Texture2D[] framesRetratoVHS = CapturarFramesRetratoVHSPosterizado(modeloScreamer, entidadAtacante);
 
-        // Luz puntual intensa sobre el rostro del screamer (desactivada en PureForm para que jamás tenga reflejos de piel y sea 100% sombra negra pura)
+        // Luz puntual intensa sobre el rostro del screamer (desactivada en PureForm para que sea sombra negra pura en 3D)
         GameObject objLuzScreamer = new GameObject("Luz_Screamer_VR");
         objLuzScreamer.layer = CapaScreamer;
         if (cam != null) objLuzScreamer.transform.SetParent(cam.transform, false);
@@ -185,7 +205,7 @@ public class FinalTurnoVR : MonoBehaviour
             ? new Color(0.88f, 0.90f, 0.96f, 1f)
             : new Color(1f, 0.90f, 0.88f, 1f);
         bool esEntidadUnlitOscura = entidadAtacante == TipoAnomalia.PureForm || entidadAtacante == TipoAnomalia.Preacher;
-        luzScreamer.intensity = esEntidadUnlitOscura ? 0f : (entidadAtacante == TipoAnomalia.Flawed ? 2.15f : 4.8f);
+        luzScreamer.intensity = esEntidadUnlitOscura ? 0f : (entidadAtacante == TipoAnomalia.Flawed ? 2.25f : 4.8f);
         luzScreamer.range = 2.6f;
         luzScreamer.shadows = LightShadows.None;
         luzScreamer.renderMode = LightRenderMode.ForcePixel;
@@ -202,10 +222,10 @@ public class FinalTurnoVR : MonoBehaviour
             fuenteAudioFinal.Play();
         }
 
-        // Sacudida violenta frente al visor (0.00 s -> 1.15 s)
-        float duracionScreamer = 1.15f;
+        // Sacudida violenta frente al visor (0.00 s -> 1.12 s)
+        float duracionScreamer = 1.12f;
         float tScreamer = 0f;
-        Vector3 posBaseScreamer = modeloScreamer != null ? modeloScreamer.transform.localPosition : new Vector3(0f, -0.5f, 0.72f);
+        Vector3 posBaseScreamer = modeloScreamer != null ? modeloScreamer.transform.localPosition : new Vector3(0f, -0.5f, 0.66f);
         Quaternion rotBaseScreamer = modeloScreamer != null ? modeloScreamer.transform.localRotation : Quaternion.Euler(0f, 180f, 0f);
 
         while (tScreamer < duracionScreamer)
@@ -218,7 +238,7 @@ public class FinalTurnoVR : MonoBehaviour
             if (modeloScreamer != null)
             {
                 float progreso = Mathf.Clamp01(tScreamer / duracionScreamer);
-                float acercamientoZ = Mathf.Lerp(0.14f, -0.05f, progreso);
+                float acercamientoZ = Mathf.Lerp(0.12f, -0.06f, progreso);
                 Vector3 sacudidaPos = new Vector3(
                     Random.Range(-0.042f, 0.042f),
                     Random.Range(-0.035f, 0.035f),
@@ -251,13 +271,11 @@ public class FinalTurnoVR : MonoBehaviour
             yield return null;
         }
 
-        // 2. CORTE BRUSCO A NEGRO ABSOLUTO + DEATH SCREEN VHS (00:01 -> 00:07 del video)
+        // 2. CORTE EN SECO A NEGRO ABSOLUTO + DEATH SCREEN VHS SINCRONIZADA AL CLIP REAL DE ALARMA
         if (modeloScreamer != null) Destroy(modeloScreamer);
         if (objLuzScreamer != null) Destroy(objLuzScreamer);
         if (fuenteAudioFinal != null) fuenteAudioFinal.Stop();
 
-        // Cambiar cullingMask exclusivamente a UI (Capa 5) sobre fondo negro puro:
-        // Así NINGÚN mueble, sofá, pared ni mando 3D puede tapar la Death Screen
         if (cam != null)
         {
             cam.clearFlags = CameraClearFlags.SolidColor;
@@ -265,129 +283,204 @@ public class FinalTurnoVR : MonoBehaviour
             cam.cullingMask = (1 << CapaUI);
         }
 
-        ConstruirCanvasCentradoEnCamara(cam);
-        ConstruirLayoutDeathScreenVHS(texturaRetratoVHS, entidadAtacante, motivoDerrota);
+        ConstruirCanvasCentradoEnCamara(cam, habilitarInteraccionInmediata: false);
+        Texture2D texInicial = (framesRetratoVHS != null && framesRetratoVHS.Length > 0) ? framesRetratoVHS[0] : null;
+        ConstruirLayoutDeathScreenVHS(texInicial, entidadAtacante, motivoDerrota);
+
+        float duracionTotalAlarma = (sonidoAlarmaVHS != null && sonidoAlarmaVHS.length > 2.5f)
+            ? sonidoAlarmaVHS.length
+            : 5.94f;
 
         if (fuenteAudioFinal != null && sonidoAlarmaVHS != null)
         {
             fuenteAudioFinal.clip = sonidoAlarmaVHS;
-            fuenteAudioFinal.volume = 0.80f;
-            fuenteAudioFinal.loop = true;
+            fuenteAudioFinal.volume = 1.0f;
+            fuenteAudioFinal.pitch = 1.0f;
+            fuenteAudioFinal.loop = (sonidoAlarmaVHS.length < 2.5f);
             fuenteAudioFinal.Play();
         }
 
-        // 00:01 a 00:02 (0.85 s): solo se ve el retrato VHS a la derecha con glitch analógico
-        if (txtMonologoDeathScreen != null) txtMonologoDeathScreen.gameObject.SetActive(false);
-        if (txtMonologoSombraGlitch != null) txtMonologoSombraGlitch.gameObject.SetActive(false);
-
-        Vector2 posBaseRetrato = new Vector2(240f, -5f);
-        Vector2 posBaseTexto = new Vector2(-185f, 10f);
+        Vector2 posBaseRetrato = new Vector2(228f, 12f);
+        Vector2 posTextoMacro = new Vector2(85f, -38f);
+        Vector2 posTextoNormal = new Vector2(-202f, 8f);
         RectTransform rectRetrato = imgRetratoVHS != null ? imgRetratoVHS.rectTransform : null;
 
-        float tFaseRetrato = 0f;
-        while (tFaseRetrato < 0.85f)
+        // Tiempos exactos 1:1 con el video de referencia (~5.94 s total de alarma):
+        // [0.00 - 0.94s]: Solo el rostro B&W desgarrado a la derecha sobre negro absoluto.
+        // [0.94 - 2.18s]: Corte macro agresivo del texto gigante superpuesto al rostro con estática fuerte.
+        // [2.18 - 4.28s]: Corte al plano completo en 2 columnas (monólogo con aberración RGB azul/roja + rostro).
+        // [4.28 - fin]:   El rostro se apaga (con destellos subliminales de 1 frame) y queda el monólogo vibrando.
+        float corteMacro = duracionTotalAlarma * 0.158f;
+        float corteDosColumnas = duracionTotalAlarma * 0.367f;
+        float corteSoloTexto = duracionTotalAlarma * 0.720f;
+
+        ActivarCapasTextoMonologo(false);
+
+        float tAlarma = 0f;
+        float timerCambioFrameRetrato = 0f;
+
+        while (tAlarma < duracionTotalAlarma)
         {
-            tFaseRetrato += Time.unscaledDeltaTime;
-            AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, false, 1f);
+            float dt = Time.unscaledDeltaTime;
+            tAlarma += dt;
+            timerCambioFrameRetrato -= dt;
+
+            // Alternar entre los 4 frames desgarrados del retrato para que la cara se deforme como cinta dañada
+            if (timerCambioFrameRetrato <= 0f && imgRetratoVHS != null && framesRetratoVHS != null && framesRetratoVHS.Length > 0)
+            {
+                imgRetratoVHS.texture = framesRetratoVHS[Random.Range(0, framesRetratoVHS.Length)];
+                timerCambioFrameRetrato = Random.Range(0.035f, 0.085f);
+            }
+
+            // Pulso rítmico sincronizado con los golpes ásperos de la alarma VHS (~7.5 Hz + picos aleatorios)
+            float pulsoAlarma = Mathf.Abs(Mathf.Sin(tAlarma * Mathf.PI * 7.6f));
+            bool picoGlitch = pulsoAlarma > 0.86f || Random.value < 0.14f;
+
+            if (TabletSistemaVR.Instancia != null && picoGlitch && Random.value < 0.35f)
+                TabletSistemaVR.Instancia.EnviarHapticAmbosMandos(0.28f, 0.05f);
+
+            if (tAlarma < corteMacro)
+            {
+                // BEAT 1: Solo rostro desgarrado en la oscuridad
+                ActivarCapasTextoMonologo(false);
+                if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(true);
+                AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, picoGlitch, 1.0f, 0.38f);
+            }
+            else if (tAlarma < corteDosColumnas)
+            {
+                // BEAT 2: Corte macro agresivo (texto gigante superpuesto sobre el rostro como en el segundo 00:02)
+                ActivarCapasTextoMonologo(true);
+                if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(true);
+                AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato + new Vector2(18f, 6f), true, 0.92f, 0.50f);
+
+                AplicarTransformYCromaticaTexto(
+                    posTextoMacro,
+                    new Vector2(2.22f, 2.58f),
+                    picoGlitch,
+                    amplitudX: 18f,
+                    amplitudY: 7f,
+                    splitRGB: 4.8f,
+                    corromperCaracteres: true);
+            }
+            else if (tAlarma < corteSoloTexto)
+            {
+                // BEAT 3: Plano completo de 2 columnas (monólogo condensado a la izquierda + rostro a la derecha)
+                ActivarCapasTextoMonologo(true);
+                if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(true);
+                AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, picoGlitch, 0.96f, 0.34f);
+
+                AplicarTransformYCromaticaTexto(
+                    posTextoNormal,
+                    new Vector2(0.98f, 1.32f),
+                    picoGlitch,
+                    amplitudX: 12f,
+                    amplitudY: 2.5f,
+                    splitRGB: 3.4f,
+                    corromperCaracteres: true);
+            }
+            else
+            {
+                // BEAT 4: El retrato desaparece en la negrura (con breves flashes subliminales) y queda el monólogo
+                ActivarCapasTextoMonologo(true);
+                bool flashSubliminal = picoGlitch && Random.value < 0.10f;
+                if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(flashSubliminal);
+                AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, picoGlitch, flashSubliminal ? 0.55f : 0f, 0.42f);
+
+                AplicarTransformYCromaticaTexto(
+                    posTextoNormal,
+                    new Vector2(0.98f, 1.32f),
+                    picoGlitch,
+                    amplitudX: 15f,
+                    amplitudY: 3.0f,
+                    splitRGB: 3.8f,
+                    corromperCaracteres: true);
+            }
+
             yield return null;
         }
 
-        // 00:02 a 00:06.8 (4.85 s): Entra el monólogo con fuente de terror VHS y GLITCH CONSTANTE en texto y retrato
-        if (txtMonologoDeathScreen != null) txtMonologoDeathScreen.gameObject.SetActive(true);
-        if (txtMonologoSombraGlitch != null) txtMonologoSombraGlitch.gameObject.SetActive(true);
+        // 3. CORTE EN SECO A PITIDO FLATLINE + TEXTO ESTIRADO EXTREMO CON SANGRADO CROMÁTICO AZUL/ROJO
+        float duracionFlatline = (sonidoFlatline != null && sonidoFlatline.length > 0.8f)
+            ? sonidoFlatline.length
+            : 2.48f;
 
-        float duracionMonologo = 4.85f;
-        float tMonologo = 0f;
-        while (tMonologo < duracionMonologo)
-        {
-            tMonologo += Time.unscaledDeltaTime;
-            float p = Mathf.Clamp01(tMonologo / duracionMonologo);
-            float brilloRetrato = p < 0.45f ? 1f : Mathf.Lerp(1f, 0.20f, (p - 0.45f) / 0.55f);
-
-            AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, true, brilloRetrato);
-
-            // Vibración constante del texto + desgarros horizontales de tracking VHS cada pocos frames
-            if (rectMonologoDeathScreen != null)
-            {
-                bool saltoTracking = Random.value < 0.22f;
-                float tearX = saltoTracking ? Random.Range(-14f, 14f) : Random.Range(-2.2f, 2.2f);
-                float tearY = Random.Range(-1.8f, 1.8f);
-                rectMonologoDeathScreen.anchoredPosition = posBaseTexto + new Vector2(tearX, tearY);
-
-                // Ligera fluctuación de escala vertical como cinta VHS inestable
-                float escY = 1.24f + (saltoTracking ? Random.Range(-0.08f, 0.12f) : Random.Range(-0.02f, 0.02f));
-                rectMonologoDeathScreen.localScale = new Vector3(1f, escY, 1f);
-
-                if (rectMonologoSombra != null)
-                {
-                    rectMonologoSombra.anchoredPosition = rectMonologoDeathScreen.anchoredPosition + new Vector2(saltoTracking ? Random.Range(-8f, 8f) : 3.5f, -1.5f);
-                    rectMonologoSombra.localScale = rectMonologoDeathScreen.localScale;
-                }
-            }
-
-            // Corrupción breve de caracteres en el texto VHS
-            if (txtMonologoDeathScreen != null)
-            {
-                if (Random.value < 0.28f)
-                    txtMonologoDeathScreen.text = CorromperTextoBreveVHS(textoMonologoBase);
-                else
-                    txtMonologoDeathScreen.text = textoMonologoBase;
-
-                float parpadeoAlfa = Random.value < 0.15f ? Random.Range(0.68f, 0.88f) : 0.96f;
-                txtMonologoDeathScreen.color = new Color(parpadeoAlfa, parpadeoAlfa, parpadeoAlfa, 1f);
-            }
-
-            yield return null;
-        }
-
-        // 3. 00:06.8 a 00:08.5 (1.65 s): CORTE EN SECO A PITIDO FLATLINE + TEXTO ESTIRADO VERTICALMENTE CON TEMBLOR
         if (fuenteAudioFinal != null)
         {
             fuenteAudioFinal.Stop();
             fuenteAudioFinal.loop = false;
+            fuenteAudioFinal.pitch = 1.0f;
             if (sonidoFlatline != null)
             {
                 fuenteAudioFinal.clip = sonidoFlatline;
-                fuenteAudioFinal.volume = 0.72f;
+                fuenteAudioFinal.volume = 0.92f;
                 fuenteAudioFinal.Play();
             }
         }
 
-        if (txtMonologoDeathScreen != null)
-            txtMonologoDeathScreen.text = textoMonologoBase;
+        SincronizarContenidoTextoMonologo(textoMonologoBase);
+        if (imgRetratoVHS != null)
+        {
+            imgRetratoVHS.gameObject.SetActive(true);
+            if (framesRetratoVHS != null && framesRetratoVHS.Length > 0)
+                imgRetratoVHS.texture = framesRetratoVHS[0];
+        }
 
         if (TabletSistemaVR.Instancia != null)
-            TabletSistemaVR.Instancia.EnviarHapticAmbosMandos(0.45f, 0.25f);
+            TabletSistemaVR.Instancia.EnviarHapticAmbosMandos(0.55f, 0.30f);
 
         float tFlatline = 0f;
-        while (tFlatline < 1.65f)
+        while (tFlatline < duracionFlatline)
         {
             tFlatline += Time.unscaledDeltaTime;
-            AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, true, 0.12f);
+
+            // En el segundo ~1.00 del flatline real hay un pequeño salto analógico de cinta (como en el video original)
+            bool segundaMitadFlatline = tFlatline >= (duracionFlatline * 0.42f);
+            Vector2 posFlatline = segundaMitadFlatline ? new Vector2(-18f, 48f) : new Vector2(42f, -64f);
+
+            // Impresión fantasma ultra tenue (7%) del rostro al fondo derecho durante el flatline
+            AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato + new Vector2(10f, -8f), false, 0.075f, 0.18f);
 
             if (rectMonologoDeathScreen != null)
             {
-                rectMonologoDeathScreen.anchoredPosition = new Vector2(-110f + Random.Range(-3.5f, 3.5f), -30f + Random.Range(-3f, 3f));
-                rectMonologoDeathScreen.localScale = new Vector3(1.52f, 2.75f + Random.Range(-0.06f, 0.06f), 1f);
-                if (rectMonologoSombra != null)
+                Vector2 jitter = new Vector2(Random.Range(-1.8f, 1.8f), Random.Range(-2.4f, 2.4f));
+                Vector3 escalaEstirada = new Vector3(2.05f, 4.80f + Random.Range(-0.05f, 0.05f), 1f);
+
+                rectMonologoDeathScreen.anchoredPosition = posFlatline + jitter;
+                rectMonologoDeathScreen.localScale = escalaEstirada;
+
+                if (txtMonologoDeathScreen != null)
+                    txtMonologoDeathScreen.color = new Color(0.93f, 0.93f, 0.87f, 1f);
+
+                if (rectMonologoAzul != null)
                 {
-                    rectMonologoSombra.anchoredPosition = rectMonologoDeathScreen.anchoredPosition + new Vector2(5f, -2f);
-                    rectMonologoSombra.localScale = rectMonologoDeathScreen.localScale;
+                    rectMonologoAzul.anchoredPosition = rectMonologoDeathScreen.anchoredPosition + new Vector2(-7.2f, 0f);
+                    rectMonologoAzul.localScale = escalaEstirada;
                 }
+                if (txtMonologoCanalAzul != null)
+                    txtMonologoCanalAzul.color = new Color(0.12f, 0.32f, 1.0f, 0.94f);
+
+                if (rectMonologoRojo != null)
+                {
+                    rectMonologoRojo.anchoredPosition = rectMonologoDeathScreen.anchoredPosition + new Vector2(6.2f, 1.8f);
+                    rectMonologoRojo.localScale = escalaEstirada;
+                }
+                if (txtMonologoCanalRojo != null)
+                    txtMonologoCanalRojo.color = new Color(0.94f, 0.15f, 0.10f, 0.88f);
             }
+
             yield return null;
         }
 
-        // 4. 00:08.5: CORTE A NEGRO EN SILENCIO Y APARICIÓN DE BOTONES (REINTENTAR / IR AL MENÚ PRINCIPAL)
+        // 4. CORTE ABRUPTO A NEGRO EN SILENCIO ABSOLUTO Y APARICIÓN DE BOTONES
         if (fuenteAudioFinal != null)
             fuenteAudioFinal.Stop();
 
-        if (txtMonologoDeathScreen != null) txtMonologoDeathScreen.gameObject.SetActive(false);
-        if (txtMonologoSombraGlitch != null) txtMonologoSombraGlitch.gameObject.SetActive(false);
+        ActivarCapasTextoMonologo(false);
         if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(false);
+        if (imgScanlinesVHS != null) imgScanlinesVHS.gameObject.SetActive(false);
         if (barraTrackingVHS != null) barraTrackingVHS.gameObject.SetActive(false);
 
-        yield return new WaitForSecondsRealtime(0.65f);
+        yield return new WaitForSecondsRealtime(0.75f);
 
         if (panelBotonesDerrota != null)
             panelBotonesDerrota.SetActive(true);
@@ -395,26 +488,101 @@ public class FinalTurnoVR : MonoBehaviour
         HabilitarRayosUIMandos();
     }
 
-    private void AplicarGlitchContinuoVHS(RectTransform rectRetrato, Vector2 posBaseRetrato, bool intenso, float brilloBase)
+    private void ActivarCapasTextoMonologo(bool activo)
+    {
+        if (txtMonologoCanalAzul != null && txtMonologoCanalAzul.gameObject.activeSelf != activo)
+            txtMonologoCanalAzul.gameObject.SetActive(activo);
+        if (txtMonologoCanalRojo != null && txtMonologoCanalRojo.gameObject.activeSelf != activo)
+            txtMonologoCanalRojo.gameObject.SetActive(activo);
+        if (txtMonologoDeathScreen != null && txtMonologoDeathScreen.gameObject.activeSelf != activo)
+            txtMonologoDeathScreen.gameObject.SetActive(activo);
+    }
+
+    private void SincronizarContenidoTextoMonologo(string contenido)
+    {
+        if (txtMonologoDeathScreen != null) txtMonologoDeathScreen.text = contenido;
+        if (txtMonologoCanalAzul != null) txtMonologoCanalAzul.text = contenido;
+        if (txtMonologoCanalRojo != null) txtMonologoCanalRojo.text = contenido;
+    }
+
+    private void AplicarTransformYCromaticaTexto(
+        Vector2 posBase,
+        Vector2 escalaBase,
+        bool saltoTracking,
+        float amplitudX,
+        float amplitudY,
+        float splitRGB,
+        bool corromperCaracteres)
+    {
+        if (rectMonologoDeathScreen == null) return;
+
+        float tearX = saltoTracking ? Random.Range(-amplitudX, amplitudX) : Random.Range(-1.8f, 1.8f);
+        float tearY = saltoTracking ? Random.Range(-amplitudY * 1.8f, amplitudY * 1.8f) : Random.Range(-amplitudY * 0.5f, amplitudY * 0.5f);
+        Vector2 posFinal = posBase + new Vector2(tearX, tearY);
+
+        float escY = escalaBase.y + (saltoTracking ? Random.Range(-0.08f, 0.14f) : Random.Range(-0.015f, 0.015f));
+        Vector3 escFinal = new Vector3(escalaBase.x, escY, 1f);
+
+        rectMonologoDeathScreen.anchoredPosition = posFinal;
+        rectMonologoDeathScreen.localScale = escFinal;
+
+        float desfaseExtra = saltoTracking ? Random.Range(1.6f, 2.5f) : 1.0f;
+        if (rectMonologoAzul != null)
+        {
+            rectMonologoAzul.anchoredPosition = posFinal + new Vector2(-splitRGB * desfaseExtra, -0.5f);
+            rectMonologoAzul.localScale = escFinal;
+        }
+        if (rectMonologoRojo != null)
+        {
+            rectMonologoRojo.anchoredPosition = posFinal + new Vector2(splitRGB * 0.92f * desfaseExtra, 1.1f);
+            rectMonologoRojo.localScale = escFinal;
+        }
+
+        string textoActual = (corromperCaracteres && saltoTracking && Random.value < 0.45f)
+            ? CorromperTextoBreveVHS(textoMonologoBase)
+            : textoMonologoBase;
+        SincronizarContenidoTextoMonologo(textoActual);
+
+        if (txtMonologoDeathScreen != null)
+        {
+            float parpadeo = saltoTracking ? Random.Range(0.76f, 0.98f) : 0.95f;
+            txtMonologoDeathScreen.color = new Color(parpadeo, parpadeo, parpadeo * 0.94f, 1f);
+        }
+    }
+
+    private void AplicarGlitchContinuoVHS(RectTransform rectRetrato, Vector2 posBaseRetrato, bool intenso, float brilloBase, float intensidadScanlines)
     {
         if (rectRetrato != null)
         {
-            float amp = intenso ? 5.0f : 3.2f;
-            float saltoX = (Random.value < 0.18f) ? Random.Range(-14f, 14f) : Random.Range(-amp, amp);
-            float saltoY = Random.Range(-amp * 0.7f, amp * 0.7f);
+            float amp = intenso ? 7.5f : 2.8f;
+            float saltoX = (intenso && Random.value < 0.35f) ? Random.Range(-22f, 22f) : Random.Range(-amp, amp);
+            float saltoY = Random.Range(-amp * 0.65f, amp * 0.65f);
             rectRetrato.anchoredPosition = posBaseRetrato + new Vector2(saltoX, saltoY);
+            float escJitter = intenso ? Random.Range(0.98f, 1.05f) : 1.0f;
+            rectRetrato.localScale = new Vector3(escJitter, escJitter, 1f);
         }
 
         if (imgRetratoVHS != null)
         {
-            float flicker = (Random.value < 0.20f) ? brilloBase * Random.Range(0.65f, 1.15f) : brilloBase;
+            float flicker = (intenso && Random.value < 0.30f) ? brilloBase * Random.Range(0.60f, 1.18f) : brilloBase;
+            flicker = Mathf.Clamp01(flicker);
             imgRetratoVHS.color = new Color(flicker, flicker, flicker, 1f);
         }
 
-        if (barraTrackingVHS != null)
+        if (imgScanlinesVHS != null)
         {
-            float y = Mathf.Repeat(Time.unscaledTime * 260f, 620f) - 310f;
+            float uvX = intenso ? Random.Range(-0.08f, 0.08f) : 0f;
+            float uvY = Mathf.Repeat(Time.unscaledTime * 1.85f + (intenso ? Random.Range(-0.18f, 0.18f) : 0f), 1f);
+            imgScanlinesVHS.uvRect = new Rect(uvX, uvY, 1f, 1.35f);
+            float alfaRuido = intenso ? Mathf.Clamp01(intensidadScanlines * Random.Range(1.05f, 1.55f)) : intensidadScanlines;
+            imgScanlinesVHS.color = new Color(1f, 1f, 1f, alfaRuido);
+        }
+
+        if (barraTrackingVHS != null && imgBarraTracking != null)
+        {
+            float y = Mathf.Repeat(Time.unscaledTime * 340f, 640f) - 320f;
             barraTrackingVHS.anchoredPosition = new Vector2(0f, y);
+            imgBarraTracking.color = new Color(1f, 1f, 1f, intenso ? Random.Range(0.04f, 0.11f) : 0.02f);
         }
     }
 
@@ -465,7 +633,7 @@ public class FinalTurnoVR : MonoBehaviour
         if (TabletSistemaVR.Instancia != null)
             TabletSistemaVR.Instancia.EnviarHapticAmbosMandos(0.55f, 0.22f);
 
-        ConstruirCanvasCentradoEnCamara(cam);
+        ConstruirCanvasCentradoEnCamara(cam, habilitarInteraccionInmediata: true);
         ConstruirLayoutVictoria6AM(anomaliasContenidas, reportesFallidos);
         HabilitarRayosUIMandos();
 
@@ -473,8 +641,25 @@ public class FinalTurnoVR : MonoBehaviour
     }
 
     // =========================================================================
-    // CLONADO 3D Y CAPTURA DE RETRATO VHS POSTERIZADO (BLANCO Y NEGRO 1:1)
+    // CLONADO 3D Y CAPTURA DE ROSTRO CLOSE-UP VHS EN NEGRO PURO (#000000)
     // =========================================================================
+    private static Transform BuscarHuesoCabeza(Transform raiz)
+    {
+        if (raiz == null) return null;
+        string[] nombresCabeza = { "mixamorig:Head", "PR_Head", "FL06_Head", "Head", "head", "Cabeza" };
+        Transform[] todos = raiz.GetComponentsInChildren<Transform>(true);
+        for (int n = 0; n < nombresCabeza.Length; n++)
+        {
+            string buscado = nombresCabeza[n];
+            for (int i = 0; i < todos.Length; i++)
+            {
+                if (todos[i] != null && string.Equals(todos[i].name, buscado, System.StringComparison.OrdinalIgnoreCase))
+                    return todos[i];
+            }
+        }
+        return null;
+    }
+
     private GameObject InstanciarModeloEntidadParaScreamer(TipoAnomalia tipo, Transform camTransform)
     {
         string nombreObjetoEscena = ObtenerNombreObjetoEntidad(tipo);
@@ -484,7 +669,7 @@ public class FinalTurnoVR : MonoBehaviour
         GameObject contenedor = new GameObject("Screamer_Entidad_3D_VR");
         contenedor.layer = CapaScreamer;
         contenedor.transform.SetParent(camTransform, false);
-        contenedor.transform.localPosition = new Vector3(0f, -0.65f, 0.76f);
+        contenedor.transform.localPosition = new Vector3(0f, -0.60f, 0.66f);
         contenedor.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
         contenedor.transform.localScale = Vector3.one;
 
@@ -527,7 +712,6 @@ public class FinalTurnoVR : MonoBehaviour
 
             AsignarCapaRecursiva(clon.transform, CapaScreamer);
 
-            // Si es Corpse acostado en suelo/cama, erguirlo frente al visor para encuadrar rostro y torso
             if (tipo == TipoAnomalia.Corpse)
             {
                 Transform grpAcostado = clon.transform.Find("Corpse_Acostado");
@@ -558,13 +742,19 @@ public class FinalTurnoVR : MonoBehaviour
                 Bounds b = rends[0].bounds;
                 for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
 
-                // Encuadrar rostro y pecho (82% de la altura total del modelo) directo frente al centro del lente de la cámara
-                Vector3 posFrenteCam = camTransform.position + camTransform.forward * 0.76f;
-                float alturaRostro = b.min.y + b.size.y * 0.80f;
+                Transform huesoCabeza = BuscarHuesoCabeza(clon.transform);
+                float alturaRostro = (huesoCabeza != null)
+                    ? huesoCabeza.position.y + 0.03f
+                    : (b.min.y + b.size.y * 0.88f);
+                Vector3 centroHorizontal = (huesoCabeza != null)
+                    ? new Vector3(huesoCabeza.position.x, alturaRostro, huesoCabeza.position.z)
+                    : new Vector3(b.center.x, alturaRostro, b.center.z);
+
+                Vector3 posFrenteCam = camTransform.position + camTransform.forward * 0.66f;
                 Vector3 delta = new Vector3(
-                    posFrenteCam.x - b.center.x,
+                    posFrenteCam.x - centroHorizontal.x,
                     posFrenteCam.y - alturaRostro,
-                    posFrenteCam.z - b.center.z
+                    posFrenteCam.z - centroHorizontal.z
                 );
                 clon.transform.position += delta;
             }
@@ -581,147 +771,323 @@ public class FinalTurnoVR : MonoBehaviour
         return contenedor;
     }
 
-    private Texture2D CapturarRetratoVHSPosterizado(GameObject modeloScreamer, TipoAnomalia tipo)
+    private Texture2D[] CapturarFramesRetratoVHSPosterizado(GameObject modeloScreamer, TipoAnomalia tipo)
     {
         int w = 256;
         int h = 320;
-        Texture2D tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
-        {
-            name = "Tex_Retrato_VHS_" + tipo,
-            filterMode = FilterMode.Point,
-            wrapMode = TextureWrapMode.Clamp
-        };
-
+        Color[] pixelesCrudos = null;
         bool capturaExitosa = false;
 
-        if (modeloScreamer != null && Camera.main != null)
+        if (modeloScreamer != null)
         {
             AsignarCapaRecursiva(modeloScreamer.transform, CapaScreamer);
 
-            RenderTexture rt = RenderTexture.GetTemporary(w, h, 16, RenderTextureFormat.ARGB32);
-            GameObject camObj = new GameObject("Cam_Snapshot_VHS");
-            camObj.transform.position = Camera.main.transform.position;
-            camObj.transform.rotation = Camera.main.transform.rotation;
+            // Para entidades con cuerpo Unlit negro absoluto (PureForm / túnica de Preacher), asignar temporalmente
+            // un material Lit gris carbón SOLO durante el milisegundo del snapshot offscreen para esculpir su cráneo,
+            // cuencas y hombros con claroscuro sobre fondo #000000 (jamás un rectángulo gris o blanco).
+            List<(Renderer rend, Material[] matsOriginales)> respaldoMateriales = new List<(Renderer, Material[])>();
+            Material matEsculturaTemporal = null;
 
-            GameObject luzObj = new GameObject("Luz_Snapshot_VHS");
-            luzObj.transform.position = Camera.main.transform.position + Camera.main.transform.forward * 0.25f + Camera.main.transform.right * 0.16f;
-            Light l = luzObj.AddComponent<Light>();
-            l.type = LightType.Point;
-            l.color = Color.white;
-            l.intensity = 6.0f;
-            l.range = 2.8f;
-            l.cullingMask = (1 << CapaScreamer);
-
-            Camera camSnap = camObj.AddComponent<Camera>();
-            camSnap.clearFlags = CameraClearFlags.SolidColor;
-            // PureForm es silueta negra pura con ojos blancos: usar fondo gris tenue VHS para recortar su silueta y resaltar sus ojos blancos
-            camSnap.backgroundColor = (tipo == TipoAnomalia.PureForm) ? new Color(0.24f, 0.24f, 0.26f, 1f) : Color.black;
-            camSnap.cullingMask = (1 << CapaScreamer);
-            camSnap.fieldOfView = 44f;
-            camSnap.nearClipPlane = 0.1f;
-            camSnap.farClipPlane = 3.0f;
-            camSnap.targetTexture = rt;
-            camSnap.Render();
-
-            RenderTexture prev = RenderTexture.active;
-            RenderTexture.active = rt;
-            tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
-            RenderTexture.active = prev;
-
-            camSnap.targetTexture = null;
-            RenderTexture.ReleaseTemporary(rt);
-            Destroy(luzObj);
-            Destroy(camObj);
-
-            Color[] pixels = tex.GetPixels();
-            int pixelesBrillantes = 0;
-
-            for (int y = 0; y < h; y++)
+            if (tipo == TipoAnomalia.PureForm || tipo == TipoAnomalia.Preacher)
             {
-                float scanline = (y % 3 == 0) ? 0.80f : 1.0f;
-                int offsetJitter = (y % 17 == 0) ? Random.Range(-4, 5) : 0;
-
-                for (int x = 0; x < w; x++)
+                Shader shLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+                if (shLit != null)
                 {
-                    int sx = Mathf.Clamp(x + offsetJitter, 0, w - 1);
-                    Color c = pixels[y * w + sx];
-                    float lum = (c.r * 0.299f + c.g * 0.587f + c.b * 0.114f) * scanline;
-                    lum = Mathf.Pow(Mathf.Clamp01(lum * 2.45f), 0.75f);
+                    matEsculturaTemporal = new Material(shLit) { name = "Temp_VHS_Sculpt" };
+                    matEsculturaTemporal.SetColor("_BaseColor", new Color(0.46f, 0.46f, 0.49f, 1f));
+                    matEsculturaTemporal.color = new Color(0.46f, 0.46f, 0.49f, 1f);
+                    matEsculturaTemporal.SetFloat("_Smoothness", 0.52f);
 
-                    Color outCol;
-                    if (lum < 0.14f)
+                    foreach (Renderer r in modeloScreamer.GetComponentsInChildren<Renderer>(false))
                     {
-                        outCol = Color.black;
+                        if (r == null || r.sharedMaterials == null) continue;
+                        Material[] orig = r.sharedMaterials;
+                        Material[] mod = (Material[])orig.Clone();
+                        bool cambio = false;
+                        for (int m = 0; m < mod.Length; m++)
+                        {
+                            string mName = mod[m] != null ? mod[m].name : "";
+                            string rName = r.gameObject.name;
+                            bool esOjoORostroBrillante = mName.Contains("Ojos") || mName.Contains("Rostro") ||
+                                                         rName.Contains("Ojo") || rName.Contains("Mascara") || rName.Contains("Rostro");
+                            if (!esOjoORostroBrillante)
+                            {
+                                mod[m] = matEsculturaTemporal;
+                                cambio = true;
+                            }
+                        }
+                        if (cambio)
+                        {
+                            respaldoMateriales.Add((r, orig));
+                            r.sharedMaterials = mod;
+                        }
                     }
-                    else if (lum < 0.46f)
-                    {
-                        pixelesBrillantes++;
-                        float g = 0.44f * scanline;
-                        outCol = new Color(g, g, g * 1.04f, 1f);
-                    }
-                    else
-                    {
-                        pixelesBrillantes++;
-                        float b = 0.95f * scanline;
-                        outCol = new Color(b, b, b, 1f);
-                    }
-
-                    pixels[y * w + x] = outCol;
                 }
             }
 
-            if (pixelesBrillantes > (w * h) / 60)
+            // Determinar el centro exacto de la CABEZA para un close-up de terror estilo cámara de seguridad
+            Renderer[] rends = modeloScreamer.GetComponentsInChildren<Renderer>(false);
+            Bounds b = rends.Length > 0 ? rends[0].bounds : new Bounds(modeloScreamer.transform.position, Vector3.one * 0.5f);
+            for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+
+            Transform huesoCabeza = BuscarHuesoCabeza(modeloScreamer.transform);
+            Vector3 focoRostro = (huesoCabeza != null)
+                ? huesoCabeza.position + Vector3.up * 0.035f
+                : new Vector3(b.center.x, b.min.y + b.size.y * 0.89f, b.center.z);
+
+            Transform refDir = Camera.main != null ? Camera.main.transform : transform;
+            Vector3 haciaCamara = -refDir.forward;
+            Vector3 derechaCam = refDir.right;
+            Vector3 arribaCam = refDir.up;
+
+            // Encuadre close-up ligeramente angulado y con leve inclinación holandesa como en el video original
+            GameObject camObj = new GameObject("Cam_Snapshot_VHS");
+            camObj.transform.position = focoRostro + haciaCamara * 0.42f + derechaCam * 0.055f + arribaCam * 0.02f;
+            camObj.transform.rotation = Quaternion.LookRotation((focoRostro - Vector3.up * 0.02f) - camObj.transform.position, arribaCam)
+                                      * Quaternion.Euler(0f, 0f, 6.5f);
+
+            // Luz principal rasante lateral-superior + contraluz tenue para recortar facciones sobre fondo #000000
+            GameObject luzKeyObj = new GameObject("Luz_Key_Snapshot_VHS");
+            luzKeyObj.transform.position = focoRostro + haciaCamara * 0.34f + derechaCam * 0.24f + arribaCam * 0.16f;
+            Light lKey = luzKeyObj.AddComponent<Light>();
+            lKey.type = LightType.Point;
+            lKey.color = Color.white;
+            lKey.intensity = (tipo == TipoAnomalia.PureForm) ? 7.5f : 5.6f;
+            lKey.range = 2.4f;
+            lKey.renderMode = LightRenderMode.ForcePixel;
+            lKey.cullingMask = (1 << CapaScreamer);
+
+            GameObject luzRimObj = new GameObject("Luz_Rim_Snapshot_VHS");
+            luzRimObj.transform.position = focoRostro + haciaCamara * 0.10f - derechaCam * 0.28f + arribaCam * 0.18f;
+            Light lRim = luzRimObj.AddComponent<Light>();
+            lRim.type = LightType.Point;
+            lRim.color = Color.white;
+            lRim.intensity = 2.4f;
+            lRim.range = 2.0f;
+            lRim.renderMode = LightRenderMode.ForcePixel;
+            lRim.cullingMask = (1 << CapaScreamer);
+
+            RenderTexture rt = RenderTexture.GetTemporary(w, h, 16, RenderTextureFormat.ARGB32);
+            Camera camSnap = camObj.AddComponent<Camera>();
+            camSnap.clearFlags = CameraClearFlags.SolidColor;
+            // SIEMPRE negro absoluto (#000000): cero recuadros blancos o grises alrededor de la entidad
+            camSnap.backgroundColor = Color.black;
+            camSnap.cullingMask = (1 << CapaScreamer);
+            camSnap.fieldOfView = 31f;
+            camSnap.nearClipPlane = 0.06f;
+            camSnap.farClipPlane = 2.5f;
+            camSnap.targetTexture = rt;
+            camSnap.Render();
+
+            Texture2D texLectura = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            RenderTexture prev = RenderTexture.active;
+            RenderTexture.active = rt;
+            texLectura.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+            RenderTexture.active = prev;
+
+            pixelesCrudos = texLectura.GetPixels();
+            Destroy(texLectura);
+
+            camSnap.targetTexture = null;
+            RenderTexture.ReleaseTemporary(rt);
+            Destroy(luzKeyObj);
+            Destroy(luzRimObj);
+            Destroy(camObj);
+
+            // Restaurar materiales originales del Screamer inmediatamente
+            for (int i = 0; i < respaldoMateriales.Count; i++)
             {
-                tex.SetPixels(pixels);
-                tex.Apply();
-                capturaExitosa = true;
+                if (respaldoMateriales[i].rend != null)
+                    respaldoMateriales[i].rend.sharedMaterials = respaldoMateriales[i].matsOriginales;
+            }
+            if (matEsculturaTemporal != null)
+                Destroy(matEsculturaTemporal);
+
+            // Verificar que el rostro capturado tenga suficientes píxeles iluminados
+            int conteoLuz = 0;
+            for (int i = 0; i < pixelesCrudos.Length; i++)
+            {
+                float lum = pixelesCrudos[i].r * 0.299f + pixelesCrudos[i].g * 0.587f + pixelesCrudos[i].b * 0.114f;
+                if (lum > 0.05f) conteoLuz++;
+            }
+            capturaExitosa = conteoLuz > (w * h) / 45;
+        }
+
+        // Posterizar imagen base con viñeteado orgánico hacia #000000 para que el rostro emerja de la oscuridad
+        Color[] basePosterizada = new Color[w * h];
+        if (capturaExitosa && pixelesCrudos != null)
+        {
+            for (int y = 0; y < h; y++)
+            {
+                float ny = (y / (float)h) * 2f - 1f;
+                float scan = (y % 2 == 0) ? 0.85f : 1.0f;
+                for (int x = 0; x < w; x++)
+                {
+                    float nx = (x / (float)w) * 2f - 1f;
+                    // Viñeta elíptica suave que funde cualquier borde exterior al negro puro
+                    float distBorde = nx * nx * 0.92f + ny * ny * 0.78f;
+                    float mascaraVignette = Mathf.Clamp01(1.18f - distBorde * 0.95f);
+
+                    // Cuantización en bloques de 2x2 píxeles estilo compresión VHS de baja resolución
+                    int bx = (x / 2) * 2;
+                    int by = (y / 2) * 2;
+                    Color c = pixelesCrudos[by * w + bx];
+                    float lum = (c.r * 0.299f + c.g * 0.587f + c.b * 0.114f) * mascaraVignette;
+                    lum = Mathf.Pow(Mathf.Clamp01(lum * 2.55f), 0.72f) * scan;
+
+                    Color outCol;
+                    if (lum < 0.15f)
+                        outCol = Color.black;
+                    else if (lum < 0.36f)
+                        outCol = new Color(0.28f * scan, 0.28f * scan, 0.30f * scan, 1f);
+                    else if (lum < 0.62f)
+                        outCol = new Color(0.58f * scan, 0.58f * scan, 0.60f * scan, 1f);
+                    else
+                        outCol = new Color(0.94f * scan, 0.94f * scan, 0.92f * scan, 1f);
+
+                    basePosterizada[y * w + x] = outCol;
+                }
             }
         }
-
-        if (!capturaExitosa)
+        else
         {
-            GenerarRetratoVHSSiluetaFallback(tex, w, h);
+            GenerarPixelesSiluetaFallback(basePosterizada, w, h);
         }
 
-        return tex;
+        // Generar 4 variantes con desgarros horizontales de cinta VHS y macrobloques distintos
+        Texture2D[] variantes = new Texture2D[4];
+        for (int v = 0; v < 4; v++)
+        {
+            Texture2D texVar = new Texture2D(w, h, TextureFormat.RGBA32, false)
+            {
+                name = $"Tex_Retrato_VHS_{tipo}_F{v}",
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp
+            };
+
+            Color[] copia = (Color[])basePosterizada.Clone();
+            int numDesgarros = 4 + v * 2;
+            for (int d = 0; d < numDesgarros; d++)
+            {
+                int yInicio = Random.Range(8, h - 26);
+                int altoBanda = Random.Range(5, 22);
+                int shiftX = Random.Range(-24, 25);
+                if (Mathf.Abs(shiftX) < 5) shiftX = (shiftX >= 0 ? 9 : -9);
+
+                for (int yy = yInicio; yy < Mathf.Min(h, yInicio + altoBanda); yy++)
+                {
+                    bool lineaNieve = (yy == yInicio || yy == yInicio + altoBanda - 1) && Random.value < 0.45f;
+                    for (int xx = 0; xx < w; xx++)
+                    {
+                        int srcX = xx - shiftX;
+                        Color colDesgarrado = (srcX >= 0 && srcX < w) ? basePosterizada[yy * w + srcX] : Color.black;
+                        if (lineaNieve && colDesgarrado.r > 0.05f && Random.value < 0.35f)
+                        {
+                            float g = Random.Range(0.55f, 0.95f);
+                            colDesgarrado = new Color(g, g, g, 1f);
+                        }
+                        copia[yy * w + xx] = colDesgarrado;
+                    }
+                }
+            }
+
+            texVar.SetPixels(copia);
+            texVar.Apply();
+            texturasTemporalesVHS.Add(texVar);
+            variantes[v] = texVar;
+        }
+
+        return variantes;
     }
 
-    private static void GenerarRetratoVHSSiluetaFallback(Texture2D tex, int w, int h)
+    private static void GenerarPixelesSiluetaFallback(Color[] pixels, int w, int h)
     {
-        Color[] pixels = new Color[w * h];
         for (int y = 0; y < h; y++)
         {
             float ny = (y / (float)h) * 2f - 1f;
-            float scan = (y % 3 == 0) ? 0.80f : 1f;
+            float scan = (y % 2 == 0) ? 0.84f : 1f;
             for (int x = 0; x < w; x++)
             {
                 float nx = (x / (float)w) * 2f - 1f;
-                float cabeza = (nx * nx) / 0.38f + ((ny - 0.12f) * (ny - 0.12f)) / 0.52f;
-                float ojoIzq = ((nx + 0.24f) * (nx + 0.24f)) / 0.018f + ((ny - 0.18f) * (ny - 0.18f)) / 0.024f;
-                float ojoDer = ((nx - 0.24f) * (nx - 0.24f)) / 0.018f + ((ny - 0.18f) * (ny - 0.18f)) / 0.024f;
-                float boca   = (nx * nx) / 0.11f + ((ny + 0.22f) * (ny + 0.22f)) / 0.045f;
+                float cabeza = (nx * nx) / 0.36f + ((ny - 0.10f) * (ny - 0.10f)) / 0.50f;
+                float ojoIzq = ((nx + 0.23f) * (nx + 0.23f)) / 0.020f + ((ny - 0.16f) * (ny - 0.16f)) / 0.026f;
+                float ojoDer = ((nx - 0.23f) * (nx - 0.23f)) / 0.020f + ((ny - 0.16f) * (ny - 0.16f)) / 0.026f;
+                float boca   = (nx * nx) / 0.10f + ((ny + 0.24f) * (ny + 0.24f)) / 0.055f;
 
-                float ruido = Mathf.PerlinNoise(nx * 4.5f + 2.1f, ny * 5.2f + 3.7f);
+                float ruido = Mathf.PerlinNoise(nx * 5.0f + 2.1f, ny * 5.8f + 3.7f);
                 Color c = Color.black;
 
-                if (cabeza <= 1.0f + (ruido - 0.5f) * 0.22f)
+                if (cabeza <= 1.0f + (ruido - 0.5f) * 0.24f)
                 {
                     if (ojoIzq < 1f || ojoDer < 1f || boca < 1f)
                     {
-                        c = (ojoIzq < 0.28f || ojoDer < 0.28f) ? new Color(0.95f, 0.95f, 0.95f, 1f) : Color.black;
+                        c = (ojoIzq < 0.26f || ojoDer < 0.26f) ? new Color(0.95f, 0.95f, 0.95f, 1f) : Color.black;
                     }
                     else
                     {
-                        float val = (1.0f - cabeza * 0.75f) + ruido * 0.45f;
+                        float val = (1.0f - cabeza * 0.78f) + ruido * 0.48f;
                         if (val > 0.72f) c = new Color(0.92f * scan, 0.92f * scan, 0.92f * scan, 1f);
-                        else if (val > 0.42f) c = new Color(0.45f * scan, 0.45f * scan, 0.48f * scan, 1f);
+                        else if (val > 0.44f) c = new Color(0.48f * scan, 0.48f * scan, 0.50f * scan, 1f);
                     }
                 }
                 pixels[y * w + x] = c;
             }
         }
-        tex.SetPixels(pixels);
+    }
+
+    private Texture2D GenerarTexturaScanlinesYRuidoVHS()
+    {
+        int w = 256;
+        int h = 256;
+        Texture2D tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+        {
+            name = "Tex_Scanlines_Ruido_VHS",
+            filterMode = FilterMode.Point,
+            wrapMode = TextureWrapMode.Repeat
+        };
+
+        Color[] cols = new Color[w * h];
+        int banda1 = 48;
+        int banda2 = 176;
+
+        for (int y = 0; y < h; y++)
+        {
+            bool esScanOscura = (y % 2 == 0);
+            float distB1 = Mathf.Abs(y - banda1);
+            float distB2 = Mathf.Abs(y - banda2);
+            float fuerzaBanda = Mathf.Max(
+                Mathf.Clamp01(1f - distB1 / 14f),
+                Mathf.Clamp01(1f - distB2 / 9f) * 0.75f
+            );
+
+            for (int x = 0; x < w; x++)
+            {
+                if (fuerzaBanda > 0.05f && Random.value < fuerzaBanda * 0.42f)
+                {
+                    // Motas horizontales de estática VHS con sutil tinte cromático analógico
+                    float v = Random.Range(0.65f, 1.0f);
+                    float a = fuerzaBanda * Random.Range(0.18f, 0.52f);
+                    cols[y * w + x] = new Color(v, v * Random.Range(0.90f, 1.0f), v, a);
+                }
+                else if (Random.value < 0.008f)
+                {
+                    cols[y * w + x] = new Color(0.9f, 0.9f, 0.95f, 0.16f);
+                }
+                else if (esScanOscura)
+                {
+                    cols[y * w + x] = new Color(0f, 0f, 0f, 0.22f);
+                }
+                else
+                {
+                    cols[y * w + x] = new Color(0f, 0f, 0f, 0f);
+                }
+            }
+        }
+
+        tex.SetPixels(cols);
         tex.Apply();
+        texturasTemporalesVHS.Add(tex);
+        return tex;
     }
 
     private static string ObtenerNombreObjetoEntidad(TipoAnomalia tipo)
@@ -738,9 +1104,9 @@ public class FinalTurnoVR : MonoBehaviour
     }
 
     // =========================================================================
-    // CANVAS CENTRADO, DERECHO Y AISLADO EN CAPA UI (100% VISIBLE EN SIMULADOR Y QUEST 2)
+    // CANVAS CENTRADO Y AISLADO EN CAPA UI (SIN PUNTERO VR DURANTE LA CINEMÁTICA)
     // =========================================================================
-    private void ConstruirCanvasCentradoEnCamara(Camera cam)
+    private void ConstruirCanvasCentradoEnCamara(Camera cam, bool habilitarInteraccionInmediata)
     {
         if (canvasFinal != null)
             Destroy(canvasFinal.gameObject);
@@ -754,6 +1120,12 @@ public class FinalTurnoVR : MonoBehaviour
         canvasFinal.worldCamera = cam;
         canvasFinal.sortingOrder = 1000;
 
+        // Mantener los raycasters apagados durante la cinemática de terror para que no aparezca el círculo del cursor VR en pantalla
+        raycasterCanvas = canvasObj.GetComponent<GraphicRaycaster>();
+        raycasterXRCanvas = canvasObj.GetComponent<TrackedDeviceGraphicRaycaster>();
+        if (raycasterCanvas != null) raycasterCanvas.enabled = habilitarInteraccionInmediata;
+        if (raycasterXRCanvas != null) raycasterXRCanvas.enabled = habilitarInteraccionInmediata;
+
         RectTransform rt = canvasObj.GetComponent<RectTransform>();
         rt.sizeDelta = new Vector2(960f, 560f);
 
@@ -763,9 +1135,12 @@ public class FinalTurnoVR : MonoBehaviour
             canvasObj.transform.localPosition = new Vector3(0f, 0f, 1.05f);
             canvasObj.transform.localRotation = Quaternion.identity;
             canvasObj.transform.localScale = Vector3.one * 0.00125f;
+
+            // Añadir RectMask2D al marco 16:9 del monitor VHS para recortar limpiamente los saltos macro y el estiramiento flatline
+            canvasObj.AddComponent<RectMask2D>();
         }
 
-        CrearImagenUI(canvasFinal.transform, "Bg_Negro_Puro", new Vector2(1600f, 1000f), Vector2.zero, Color.black).raycastTarget = false;
+        CrearImagenUI(canvasFinal.transform, "Bg_Negro_Puro", new Vector2(1800f, 1100f), Vector2.zero, Color.black).raycastTarget = false;
     }
 
     private void ConstruirLayoutDeathScreenVHS(Texture2D texRetrato, TipoAnomalia entidad, string motivo)
@@ -773,20 +1148,20 @@ public class FinalTurnoVR : MonoBehaviour
         string nombreEntidad = TabletSistemaVR.ObtenerNombreTipoEspanol(entidad);
         Font fontTerror = ObtenerFuenteTerror();
 
-        // Retrato VHS en blanco y negro a la derecha (x = +240)
+        // 1. Retrato close-up VHS en blanco y negro a la derecha sobre negro absoluto (#000000)
         GameObject objRaw = new GameObject("Retrato_Anomalia_VHS", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
         objRaw.layer = CapaUI;
         objRaw.transform.SetParent(canvasFinal.transform, false);
         RectTransform rtRaw = objRaw.GetComponent<RectTransform>();
-        rtRaw.sizeDelta = new Vector2(345f, 435f);
-        rtRaw.anchoredPosition = new Vector2(240f, -5f);
+        rtRaw.sizeDelta = new Vector2(420f, 495f);
+        rtRaw.anchoredPosition = new Vector2(228f, 12f);
 
         imgRetratoVHS = objRaw.GetComponent<RawImage>();
         imgRetratoVHS.texture = texRetrato;
         imgRetratoVHS.color = Color.white;
         imgRetratoVHS.raycastTarget = false;
 
-        // Monólogo en 3 párrafos a la izquierda (x = -185) con fuente de terror VHS
+        // 2. Monólogo en 3 párrafos con aberración cromática RGB real (canal azul izquierdo + canal rojo derecho + fósforo blanco)
         textoMonologoBase =
             "Cuando te encontramos, apenas eras reconocible.\n" +
             "Tus ojos habían sido arrancados por completo, tu\n" +
@@ -805,42 +1180,70 @@ public class FinalTurnoVR : MonoBehaviour
             "Lo siento, vigilante. Desearía haber podido\n" +
             "hacer algo más por ti.";
 
-        // Sombra fantasma cromática VHS detrás del texto para dar el efecto de sangrado analógico
-        txtMonologoSombraGlitch = CrearTextoUI(
+        Vector2 tamTexto = new Vector2(520f, 460f);
+        Vector2 posTexto = new Vector2(-202f, 8f);
+
+        txtMonologoCanalAzul = CrearTextoUI(
             canvasFinal.transform,
-            "Txt_Monologo_Sombra_VHS",
+            "Txt_Monologo_CanalAzul_VHS",
             textoMonologoBase,
-            new Vector2(-181f, 8f),
-            new Vector2(510f, 450f),
+            posTexto + new Vector2(-3.4f, -0.5f),
+            tamTexto,
             22,
             TextAnchor.MiddleLeft,
-            new Color(0.55f, 0.14f, 0.16f, 0.48f),
+            new Color(0.14f, 0.34f, 1.0f, 0.88f),
             FontStyle.Normal,
             fontTerror);
-        rectMonologoSombra = txtMonologoSombraGlitch.GetComponent<RectTransform>();
-        rectMonologoSombra.localScale = new Vector3(1f, 1.24f, 1f);
+        rectMonologoAzul = txtMonologoCanalAzul.GetComponent<RectTransform>();
+        rectMonologoAzul.localScale = new Vector3(0.98f, 1.32f, 1f);
+
+        txtMonologoCanalRojo = CrearTextoUI(
+            canvasFinal.transform,
+            "Txt_Monologo_CanalRojo_VHS",
+            textoMonologoBase,
+            posTexto + new Vector2(3.1f, 1.0f),
+            tamTexto,
+            22,
+            TextAnchor.MiddleLeft,
+            new Color(0.94f, 0.16f, 0.12f, 0.82f),
+            FontStyle.Normal,
+            fontTerror);
+        rectMonologoRojo = txtMonologoCanalRojo.GetComponent<RectTransform>();
+        rectMonologoRojo.localScale = new Vector3(0.98f, 1.32f, 1f);
 
         txtMonologoDeathScreen = CrearTextoUI(
             canvasFinal.transform,
             "Txt_Monologo_VHS",
             textoMonologoBase,
-            new Vector2(-185f, 10f),
-            new Vector2(510f, 450f),
+            posTexto,
+            tamTexto,
             22,
             TextAnchor.MiddleLeft,
-            new Color(0.94f, 0.94f, 0.94f, 1f),
+            new Color(0.94f, 0.94f, 0.89f, 1f),
             FontStyle.Normal,
             fontTerror);
         rectMonologoDeathScreen = txtMonologoDeathScreen.GetComponent<RectTransform>();
-        rectMonologoDeathScreen.localScale = new Vector3(1f, 1.24f, 1f);
+        rectMonologoDeathScreen.localScale = new Vector3(0.98f, 1.32f, 1f);
 
-        // Barra horizontal de tracking VHS que recorre la pantalla
-        Image imgBarra = CrearImagenUI(canvasFinal.transform, "Barra_Tracking_VHS", new Vector2(960f, 6f), Vector2.zero,
-            new Color(1f, 1f, 1f, 0.10f));
-        imgBarra.raycastTarget = false;
-        barraTrackingVHS = imgBarra.rectTransform;
+        // 3. Capa global de scanlines CRT + bandas de nieve analógica VHS en movimiento
+        GameObject objScan = new GameObject("Overlay_Scanlines_VHS", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
+        objScan.layer = CapaUI;
+        objScan.transform.SetParent(canvasFinal.transform, false);
+        RectTransform rtScan = objScan.GetComponent<RectTransform>();
+        rtScan.sizeDelta = new Vector2(980f, 580f);
+        rtScan.anchoredPosition = Vector2.zero;
+        imgScanlinesVHS = objScan.GetComponent<RawImage>();
+        imgScanlinesVHS.texture = GenerarTexturaScanlinesYRuidoVHS();
+        imgScanlinesVHS.color = new Color(1f, 1f, 1f, 0.36f);
+        imgScanlinesVHS.raycastTarget = false;
 
-        // Panel de botones finales (aparece al terminar el pitido flatline)
+        // Pliegue sutil de tracking analógico (nunca una línea blanca rígida)
+        imgBarraTracking = CrearImagenUI(canvasFinal.transform, "Barra_Tracking_VHS", new Vector2(980f, 16f), Vector2.zero,
+            new Color(1f, 1f, 1f, 0.03f));
+        imgBarraTracking.raycastTarget = false;
+        barraTrackingVHS = imgBarraTracking.rectTransform;
+
+        // 4. Panel de botones finales (aparece únicamente tras el corte a negro del flatline)
         panelBotonesDerrota = new GameObject("Panel_Botones_Derrota", typeof(RectTransform));
         panelBotonesDerrota.layer = CapaUI;
         panelBotonesDerrota.transform.SetParent(canvasFinal.transform, false);
@@ -941,8 +1344,20 @@ public class FinalTurnoVR : MonoBehaviour
         }
     }
 
+    private void DeshabilitarRayosUIDuranteCinematica()
+    {
+        foreach (XRRayInteractor ray in FindObjectsByType<XRRayInteractor>(FindObjectsInactive.Include))
+        {
+            if (ray == null) continue;
+            ray.enableUIInteraction = false;
+        }
+    }
+
     private void HabilitarRayosUIMandos()
     {
+        if (raycasterCanvas != null) raycasterCanvas.enabled = true;
+        if (raycasterXRCanvas != null) raycasterXRCanvas.enabled = true;
+
         if (EventSystem.current == null)
         {
             new GameObject("EventSystem VR", typeof(EventSystem), typeof(XRUIInputModule));
@@ -985,6 +1400,8 @@ public class FinalTurnoVR : MonoBehaviour
         t.alignment = align;
         t.color = col;
         t.lineSpacing = 0.98f;
+        t.horizontalOverflow = HorizontalWrapMode.Wrap;
+        t.verticalOverflow = VerticalWrapMode.Overflow;
         t.raycastTarget = false;
         return t;
     }
@@ -1017,6 +1434,16 @@ public class FinalTurnoVR : MonoBehaviour
 
     private void AsegurarAudiosFallback()
     {
+#if UNITY_EDITOR
+        if (sonidoScreamer == null)
+            sonidoScreamer = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_screamer_anomalia.wav");
+        if (sonidoAlarmaVHS == null)
+            sonidoAlarmaVHS = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_deathscreen_vhs_alarm.wav");
+        if (sonidoFlatline == null)
+            sonidoFlatline = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_deathscreen_flatline.wav");
+        if (sonidoVictoria6AM == null)
+            sonidoVictoria6AM = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_victoria_6am.wav");
+#endif
         int sr = 22050;
 
         if (sonidoScreamer == null)
@@ -1037,7 +1464,7 @@ public class FinalTurnoVR : MonoBehaviour
 
         if (sonidoAlarmaVHS == null)
         {
-            int n = Mathf.RoundToInt(sr * 2.0f);
+            int n = Mathf.RoundToInt(sr * 5.9f);
             float[] d = new float[n];
             for (int i = 0; i < n; i++)
             {
@@ -1052,12 +1479,12 @@ public class FinalTurnoVR : MonoBehaviour
 
         if (sonidoFlatline == null)
         {
-            int n = Mathf.RoundToInt(sr * 1.7f);
+            int n = Mathf.RoundToInt(sr * 2.48f);
             float[] d = new float[n];
             for (int i = 0; i < n; i++)
             {
                 float t = (float)i / sr;
-                d[i] = (Mathf.Sin(2f * Mathf.PI * 1046.5f * t) * 0.75f + Mathf.Sin(2f * Mathf.PI * 2093f * t) * 0.2f) * 0.6f;
+                d[i] = (Mathf.Sin(2f * Mathf.PI * 1005f * t) * 0.78f + Mathf.Sin(2f * Mathf.PI * 2010f * t) * 0.2f) * 0.65f;
             }
             sonidoFlatline = AudioClip.Create("FlatlineFallback", n, 1, sr, false);
             sonidoFlatline.SetData(d, 0);

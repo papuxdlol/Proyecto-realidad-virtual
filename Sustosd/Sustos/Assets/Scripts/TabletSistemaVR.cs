@@ -71,6 +71,7 @@ public class TabletSistemaVR : MonoBehaviour
     private int totalTiemposReaccion = 0;
     private bool evento3AMDisparado = false;
     private float ultimoSegundoInspeccionMostrado = -1f;
+    private int ultimoConteoActivasUI = -1;
     private InputDevice rightController;
     private InputDevice leftController;
 
@@ -186,7 +187,7 @@ public class TabletSistemaVR : MonoBehaviour
 
         if (enFaseInspeccion && textoEstadoReporte != null)
         {
-            textoEstadoReporte.text = "FASE DE INSPECCIÓN: Recorre y memoriza la casa (sin anomalías).";
+            textoEstadoReporte.text = "Tiempo de gracia";
             textoEstadoReporte.color = new Color(0.65f, 0.88f, 1f, 1f);
         }
     }
@@ -221,18 +222,30 @@ public class TabletSistemaVR : MonoBehaviour
     public void RefrescarListaAnomalias()
     {
         todasLasAnomalias.Clear();
-        todasLasAnomalias.AddRange(FindObjectsByType<ObjetoAnomalia>(FindObjectsInactive.Include));
-        for (int i = 0; i < todasLasAnomalias.Count; i++)
+        ObjetoAnomalia[] halladas = FindObjectsByType<ObjetoAnomalia>(FindObjectsInactive.Include);
+        for (int i = 0; i < halladas.Length; i++)
         {
-            if (todasLasAnomalias[i] != null)
+            ObjetoAnomalia a = halladas[i];
+            if (a == null) continue;
+            // Excluir por completo escrituras en las paredes
+            if (a.gameObject.name.ToLowerInvariant().Contains("mensajepared"))
             {
-                MeshRenderer mr = todasLasAnomalias[i].GetComponent<MeshRenderer>();
-                Vector3 posReal = mr != null ? mr.bounds.center : todasLasAnomalias[i].transform.position;
-                todasLasAnomalias[i].nombreCuarto = ObjetoAnomalia.NormalizarCuartoPorPosicion(
-                    posReal,
-                    todasLasAnomalias[i].nombreCuarto,
-                    todasLasAnomalias[i].gameObject.name);
+                a.estaActiva = false;
+                if (a.posiblesVariantes != null) a.posiblesVariantes.Clear();
+                a.gameObject.SetActive(false);
+                continue;
             }
+
+            if (!Application.isPlaying || enFaseInspeccion)
+                a.estaActiva = false;
+
+            MeshRenderer mr = a.GetComponent<MeshRenderer>();
+            Vector3 posReal = mr != null ? mr.bounds.center : a.transform.position;
+            a.nombreCuarto = ObjetoAnomalia.NormalizarCuartoPorPosicion(
+                posReal,
+                a.nombreCuarto,
+                a.gameObject.name);
+            todasLasAnomalias.Add(a);
         }
     }
 
@@ -334,15 +347,16 @@ public class TabletSistemaVR : MonoBehaviour
                 GenerarAnomaliaAleatoria();
             }
 
-            // Idea 8: Parpadeo en rojo del reloj en la Tablet cuando hay 3 o más anomalías activas
-            if (!glitchActivo && textoRelojHeader != null)
+            // Mantener el indicador de nivel de anomalías sincronizado al instante y parpadear en estado Crítico
+            int activas = ContarAnomaliasActivas();
+            if (activas != ultimoConteoActivasUI && !glitchActivo)
             {
-                int activas = ContarAnomaliasActivas();
-                if (activas >= 3)
-                {
-                    float pulso = Mathf.PingPong(Time.unscaledTime * (activas >= 4 ? 5.5f : 3.2f), 1f);
-                    textoRelojHeader.color = Color.Lerp(new Color(0.55f, 0.08f, 0.08f, 1f), new Color(1f, 0.22f, 0.22f, 1f), pulso);
-                }
+                ActualizarRelojUI();
+            }
+            if (!glitchActivo && textoRelojHeader != null && activas >= 3)
+            {
+                float pulso = Mathf.PingPong(Time.unscaledTime * (activas >= 4 ? 5.2f : 3.0f), 1f);
+                textoRelojHeader.color = Color.Lerp(new Color(0.58f, 0.10f, 0.10f, 1f), new Color(1f, 0.24f, 0.24f, 1f), pulso);
             }
         }
     }
@@ -361,7 +375,7 @@ public class TabletSistemaVR : MonoBehaviour
 
         if (textoEstadoReporte != null)
         {
-            textoEstadoReporte.text = "12:00 AM - TURNO INICIADO. Mantén la casa bajo control.";
+            textoEstadoReporte.text = "Turno iniciado";
             textoEstadoReporte.color = colorVerdeSeleccionado;
         }
         if (audioFeedback != null && sonidoAcierto != null)
@@ -422,15 +436,15 @@ public class TabletSistemaVR : MonoBehaviour
     }
 
     // =========================================================================
-    // GESTOR DE ANOMALÍAS INTEGRADO (COBERTURA GARANTIZADA 1x POR TIPO + SIN REPETIR CUARTO)
+    // GESTOR DE ANOMALÍAS INTEGRADO (COBERTURA GARANTIZADA 1x POR TIPO + SIN REPETIR CUARTO, SIN ESCRITURAS EN PARED)
     // =========================================================================
-    private static readonly string[] CategoriasHoraTemprana = { "Imagery", "Displacement", "Mimic", "Electrical_Luz", "Unknown_Puerta", "Unknown_Pared" };
-    private static readonly string[] CategoriasHoraMedia    = { "Unknown_PuertaAbismal", "Preacher", "Tulpa", "Corpse", "Unknown_LuzDia", "Unknown_Pared", "Electrical_Apagon", "Imagery" };
-    private static readonly string[] CategoriasHoraTardia   = { "Flawed", "PureForm", "Unknown_PuertaAbismal", "Electrical_Apagon", "Tulpa", "Preacher", "Corpse", "Unknown_LuzDia", "Unknown_Pared" };
+    private static readonly string[] CategoriasHoraTemprana = { "Imagery", "Displacement", "Mimic", "Electrical_Luz", "Unknown_Puerta" };
+    private static readonly string[] CategoriasHoraMedia    = { "Unknown_PuertaAbismal", "Preacher", "Tulpa", "Corpse", "Unknown_LuzDia", "Electrical_Apagon", "Imagery" };
+    private static readonly string[] CategoriasHoraTardia   = { "Flawed", "PureForm", "Unknown_PuertaAbismal", "Electrical_Apagon", "Tulpa", "Preacher", "Corpse", "Unknown_LuzDia" };
     private static readonly string[] TodasLasCategoriasDemo =
     {
         "Imagery", "Displacement", "Mimic", "Electrical_Luz", "Electrical_Apagon",
-        "Unknown_Puerta", "Unknown_PuertaAbismal", "Unknown_LuzDia", "Unknown_Pared",
+        "Unknown_Puerta", "Unknown_PuertaAbismal", "Unknown_LuzDia",
         "Preacher", "Tulpa", "Corpse", "Flawed", "PureForm"
     };
 
@@ -488,12 +502,7 @@ public class TabletSistemaVR : MonoBehaviour
                     }
                     break;
                 case "Unknown_Pared":
-                    if (v.tipo == TipoAnomalia.Unknown && (desc.Contains("mensaje") || desc.Contains("pared") || objNombre.Contains("mensajepared")))
-                    {
-                        tipoAsociado = TipoAnomalia.Unknown;
-                        return true;
-                    }
-                    break;
+                    return false;
                 case "Unknown_Puerta":
                     if (v.tipo == TipoAnomalia.Unknown && (v.puertaQueSeAbreSola != null || desc.Contains("puerta")))
                     {
@@ -548,12 +557,32 @@ public class TabletSistemaVR : MonoBehaviour
         string cuartoActualJugador = ObjetoAnomalia.NormalizarCuartoPorPosicion(cam.position, "LivingRoom");
         bool hayApagon = !InterruptorLuz.EnergiaGeneralCasaActiva;
 
-        // 2. Priorizar cuartos donde NO está el jugador ni el último cuarto usado
+        // 2. Excluir estrictamente el cuarto actual del jugador y cualquier objeto en su línea de visión para que NUNCA aparezcan en el aire frente a él
         List<ObjetoAnomalia> preferidas = inactivas.FindAll(a =>
-            !string.Equals(a.nombreCuarto, cuartoActualJugador, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(a.nombreCuarto, ultimoCuartoGenerado, StringComparison.OrdinalIgnoreCase) &&
-            (Vector3.Distance(cam.position, a.transform.position) > 3.5f ||
-             Vector3.Angle(cam.forward, (a.transform.position - cam.position).normalized) > 70f));
+        {
+            string nLow = a.gameObject.name.ToLowerInvariant();
+            bool seReubica = nLow.StartsWith("anomalia_flawed") || nLow.StartsWith("anomalia_pureform") ||
+                             nLow.StartsWith("anomalia_preacher") || nLow.StartsWith("anomalia_corpse") ||
+                             nLow.Contains("puertaabismal");
+            if (seReubica) return true;
+
+            MeshRenderer mr = a.GetComponent<MeshRenderer>();
+            Vector3 pObj = mr != null ? mr.bounds.center : a.transform.position;
+            return !string.Equals(a.nombreCuarto, ultimoCuartoGenerado, StringComparison.OrdinalIgnoreCase) &&
+                   !ObjetoAnomalia.PuntoVisibleOMismoCuartoJugador(cam, pObj, a.nombreCuarto);
+        });
+        List<ObjetoAnomalia> segurasFueraDeVista = inactivas.FindAll(a =>
+        {
+            string nLow = a.gameObject.name.ToLowerInvariant();
+            bool seReubica = nLow.StartsWith("anomalia_flawed") || nLow.StartsWith("anomalia_pureform") ||
+                             nLow.StartsWith("anomalia_preacher") || nLow.StartsWith("anomalia_corpse") ||
+                             nLow.Contains("puertaabismal");
+            if (seReubica) return true;
+            MeshRenderer mr = a.GetComponent<MeshRenderer>();
+            Vector3 pObj = mr != null ? mr.bounds.center : a.transform.position;
+            return !ObjetoAnomalia.PuntoVisibleOMismoCuartoJugador(cam, pObj, a.nombreCuarto);
+        });
+        List<ObjetoAnomalia> poolSecundario = segurasFueraDeVista.Count > 0 ? segurasFueraDeVista : inactivas;
 
         // 3. Sistema de Cobertura Garantizada: asegurar que salga al menos 1 VEZ cada tipo y variación clave durante el turno
         string[] ordenHora = horaActual < 2 ? CategoriasHoraTemprana : (horaActual < 4 ? CategoriasHoraMedia : CategoriasHoraTardia);
@@ -562,22 +591,22 @@ public class TabletSistemaVR : MonoBehaviour
         string categoriaElegida = null;
 
         // 3a. Buscar primero entre las categorías PENDIENTES propias de la hora actual
-        if (!IntentarElegirDeCategorias(ordenHora, true, hayApagon, preferidas, inactivas, out elegida, out tipoForzado, out categoriaElegida))
+        if (!IntentarElegirDeCategorias(ordenHora, true, hayApagon, preferidas, poolSecundario, out elegida, out tipoForzado, out categoriaElegida))
         {
             // 3b. Si ya salieron todas las de esta hora, buscar CUALQUIER categoría pendiente del turno completo
-            if (!IntentarElegirDeCategorias(TodasLasCategoriasDemo, true, hayApagon, preferidas, inactivas, out elegida, out tipoForzado, out categoriaElegida))
+            if (!IntentarElegirDeCategorias(TodasLasCategoriasDemo, true, hayApagon, preferidas, poolSecundario, out elegida, out tipoForzado, out categoriaElegida))
             {
-                // 3c. Si ya salieron todas al menos 1 vez, usar RNG balanceado por categoría (para que los 89 Displacement no ahoguen a las entidades)
-                IntentarElegirDeCategorias(ordenHora, false, hayApagon, preferidas, inactivas, out elegida, out tipoForzado, out categoriaElegida);
+                // 3c. Si ya salieron todas al menos 1 vez, usar RNG balanceado por categoría
+                IntentarElegirDeCategorias(ordenHora, false, hayApagon, preferidas, poolSecundario, out elegida, out tipoForzado, out categoriaElegida);
                 if (elegida == null)
-                    IntentarElegirDeCategorias(TodasLasCategoriasDemo, false, hayApagon, preferidas, inactivas, out elegida, out tipoForzado, out categoriaElegida);
+                    IntentarElegirDeCategorias(TodasLasCategoriasDemo, false, hayApagon, preferidas, poolSecundario, out elegida, out tipoForzado, out categoriaElegida);
             }
         }
 
         // Fallback de seguridad
         if (elegida == null)
         {
-            List<ObjetoAnomalia> fallbackPool = preferidas.Count > 0 ? preferidas : inactivas;
+            List<ObjetoAnomalia> fallbackPool = preferidas.Count > 0 ? preferidas : poolSecundario;
             elegida = fallbackPool[UnityEngine.Random.Range(0, fallbackPool.Count)];
         }
 
@@ -686,10 +715,32 @@ public class TabletSistemaVR : MonoBehaviour
         anomaliasCorregidas++;
         if (textoEstadoReporte != null)
         {
-            textoEstadoReporte.text = "¡APAGÓN REPARADO EN GARAJE!";
+            textoEstadoReporte.text = "Energía restablecida";
             textoEstadoReporte.color = colorVerdeSeleccionado;
         }
         ActualizarRelojUI();
+    }
+
+    private ObjetoAnomalia BuscarAnomaliaReportada(string cuartoReporte, TipoAnomalia tipoBuscado)
+    {
+        if (todasLasAnomalias.Count == 0)
+            RefrescarListaAnomalias();
+
+        ObjetoAnomalia enc = todasLasAnomalias.Find(a =>
+            a != null &&
+            a.estaActiva &&
+            CoincideCuartoExacto(a, cuartoReporte) &&
+            a.tipoActivoActual == tipoBuscado);
+
+        if (enc == null && EsRecamara(cuartoReporte))
+        {
+            enc = todasLasAnomalias.Find(a =>
+                a != null &&
+                a.estaActiva &&
+                EsRecamara(ObjetoAnomalia.NormalizarCuartoPorPosicion(a.transform.position, a.nombreCuarto, a.gameObject.name)) &&
+                a.tipoActivoActual == tipoBuscado);
+        }
+        return enc;
     }
 
     private void AlPulsarBotonPrincipal()
@@ -713,13 +764,22 @@ public class TabletSistemaVR : MonoBehaviour
         procesandoReporte = true;
         ActualizarEstadoBotonPrincipal();
 
-        // Suspenso limpio: solo se animan los puntos de "REPORTANDO..." antes de dar el resultado
+        // Si el reporte coincide con el Flawed de traje sentado, disparar Sit To Stand para que se levante en los últimos momentos antes del corte!
+        ObjetoAnomalia preMatch = BuscarAnomaliaReportada(cuartoCongelado, (TipoAnomalia)tipoCongelado);
+        bool disparoSitToStand = false;
+
         Color colorProcesando = new Color(1f, 0.85f, 0.32f, 1f);
         string[] puntos = new string[] { ".", "..", "...", ".", "..", "..." };
 
         for (int i = 0; i < puntos.Length; i++)
         {
-            string textoAnimado = "REPORTANDO" + puntos[i];
+            if (!disparoSitToStand && i == 1 && preMatch != null && preMatch.EsFlawedSentadoActivo())
+            {
+                disparoSitToStand = true;
+                preMatch.DispararSitToStandPorReporte();
+            }
+
+            string textoAnimado = "Enviando" + puntos[i];
             if (textoEstadoReporte != null && !glitchActivo)
             {
                 textoEstadoReporte.text = textoAnimado;
@@ -735,7 +795,7 @@ public class TabletSistemaVR : MonoBehaviour
                 EnviarHapticPulso(0.12f, 0.05f);
             }
 
-            yield return new WaitForSeconds(0.3f);
+            yield return new WaitForSeconds(disparoSitToStand ? 0.36f : 0.28f);
         }
 
         procesandoReporte = false;
@@ -747,30 +807,9 @@ public class TabletSistemaVR : MonoBehaviour
     private void EnviarReporteAlGestor(string cuartoReporte, int tipoReporte)
     {
         TipoAnomalia tipoBuscado = (TipoAnomalia)tipoReporte;
-        string cuartoEsp = ObtenerNombreCuartoEspanol(cuartoReporte);
-        string tipoEsp = ObtenerNombreTipoEspanol(tipoBuscado);
+        ObjetoAnomalia anomaliaEncontrada = BuscarAnomaliaReportada(cuartoReporte, tipoBuscado);
 
-        if (todasLasAnomalias.Count == 0)
-            RefrescarListaAnomalias();
-
-        // 1. Buscar coincidencia exacta de Habitación + Tipo de Anomalía activa
-        ObjetoAnomalia anomaliaEncontrada = todasLasAnomalias.Find(a =>
-            a != null &&
-            a.estaActiva &&
-            CoincideCuartoExacto(a, cuartoReporte) &&
-            a.tipoActivoActual == tipoBuscado);
-
-        // 2. Si el jugador seleccionó cualquiera de las 3 recámaras y acertó el tipo en otra recámara del piso 2, aceptarlo también
-        if (anomaliaEncontrada == null && EsRecamara(cuartoReporte))
-        {
-            anomaliaEncontrada = todasLasAnomalias.Find(a =>
-                a != null &&
-                a.estaActiva &&
-                EsRecamara(ObjetoAnomalia.NormalizarCuartoPorPosicion(a.transform.position, a.nombreCuarto)) &&
-                a.tipoActivoActual == tipoBuscado);
-        }
-
-        // 3. Si el jugador ya subió la palanca de fusibles en el Garaje y reporta GARAJE + FALLO ELÉCTRICO
+        // Si el jugador ya subió la palanca de fusibles en el Garaje y reporta GARAJE + FALLO ELÉCTRICO
         if (anomaliaEncontrada == null &&
             fusiblesReparadosReciente &&
             (string.Equals(cuartoReporte, "Garage", StringComparison.OrdinalIgnoreCase) ||
@@ -778,7 +817,7 @@ public class TabletSistemaVR : MonoBehaviour
             tipoBuscado == TipoAnomalia.Electrical)
         {
             fusiblesReparadosReciente = false;
-            textoEstadoReporte.text = $"¡ANOMALÍA CORREGIDA! ({anomaliasCorregidas} resueltas)";
+            textoEstadoReporte.text = "Reporte validado";
             textoEstadoReporte.color = colorVerdeSeleccionado;
             if (audioFeedback && sonidoAcierto) audioFeedback.PlayOneShot(sonidoAcierto);
             EnviarHapticPulso(0.65f, 0.18f);
@@ -789,6 +828,7 @@ public class TabletSistemaVR : MonoBehaviour
         if (anomaliaEncontrada != null)
         {
             string cuartoRealEsp = ObtenerNombreCuartoEspanol(anomaliaEncontrada.nombreCuarto);
+            string tipoEsp = ObtenerNombreTipoEspanol(tipoBuscado);
             if (tiempoActivacionPorAnomalia.TryGetValue(anomaliaEncontrada, out float tInicio))
             {
                 sumaTiemposReaccion += Mathf.Max(1f, Time.time - tInicio);
@@ -796,42 +836,24 @@ public class TabletSistemaVR : MonoBehaviour
                 tiempoActivacionPorAnomalia.Remove(anomaliaEncontrada);
             }
 
-            // Idea 7 (Bloque 2): Desaparición en micro-corte de luz del cuarto para que la entidad se esfume en el parpadeo
-            InterruptorLuz.EjecutarMicroCorteYRestaurar(this, anomaliaEncontrada);
-
             anomaliasCorregidas++;
-            textoEstadoReporte.text = $"¡CORREGIDA! ({cuartoRealEsp} - {tipoEsp})";
+            textoEstadoReporte.text = "Reporte validado";
             textoEstadoReporte.color = colorVerdeSeleccionado;
             if (audioFeedback && sonidoAcierto) audioFeedback.PlayOneShot(sonidoAcierto);
             EnviarHapticPulso(0.65f, 0.18f);
-            ActualizarRelojUI();
+
+            // Corte oscuro envolvente de cámara + luz: actualiza el contador de la Tablet DESPUÉS de desactivar la anomalía en la oscuridad!
+            InterruptorLuz.EjecutarMicroCorteYRestaurar(this, anomaliaEncontrada, ActualizarRelojUI);
             Debug.Log($"[REPORTE EXITOSO] Se corrigió {anomaliaEncontrada.name} en {cuartoRealEsp} ({tipoEsp}).");
         }
         else
         {
             reportesFallidos++;
-            ObjetoAnomalia otraEnMismoCuarto = todasLasAnomalias.Find(a =>
-                a != null &&
-                a.estaActiva &&
-                CoincideCuartoExacto(a, cuartoReporte));
-
-            int totalActivas = ContarAnomaliasActivas();
-            if (totalActivas == 0)
-            {
-                textoEstadoReporte.text = "SIN ANOMALÍAS ACTIVAS EN ESTE MOMENTO.";
-            }
-            else if (otraEnMismoCuarto != null)
-            {
-                textoEstadoReporte.text = $"FALLO: En {cuartoEsp} no es {tipoEsp}.";
-            }
-            else
-            {
-                textoEstadoReporte.text = $"ERROR: Sin {tipoEsp} en {cuartoEsp}.";
-            }
-
+            textoEstadoReporte.text = "Sin coincidencias";
             textoEstadoReporte.color = new Color(1f, 0.35f, 0.35f, 1f);
             if (audioFeedback && sonidoFallo) audioFeedback.PlayOneShot(sonidoFallo);
             EnviarHapticPulso(0.3f, 0.1f);
+            ActualizarRelojUI();
 
             EvaluarDerrotaPorAcumulacionOFallos();
         }
@@ -937,19 +959,19 @@ public class TabletSistemaVR : MonoBehaviour
         {
             botonEnviarReporte.interactable = true;
             if (imagenBotonEnviar != null) imagenBotonEnviar.color = colorBotonInspeccion;
-            if (textoBotonEnviar != null) textoBotonEnviar.text = "[ INICIAR TURNO YA (12:00 AM) ]";
+            if (textoBotonEnviar != null) textoBotonEnviar.text = "Iniciar turno";
         }
         else if (procesandoReporte)
         {
             botonEnviarReporte.interactable = false;
             if (imagenBotonEnviar != null) imagenBotonEnviar.color = colorBotonProcesando;
-            if (textoBotonEnviar != null) textoBotonEnviar.text = "REPORTANDO.";
+            if (textoBotonEnviar != null) textoBotonEnviar.text = "Enviando.";
         }
         else
         {
             botonEnviarReporte.interactable = true;
             if (imagenBotonEnviar != null) imagenBotonEnviar.color = colorBotonEnviarNormal;
-            if (textoBotonEnviar != null) textoBotonEnviar.text = "[ ENVIAR REPORTE ]";
+            if (textoBotonEnviar != null) textoBotonEnviar.text = "Enviar reporte";
         }
     }
 
@@ -990,7 +1012,7 @@ public class TabletSistemaVR : MonoBehaviour
             }
             if (textoEstadoReporte != null && !procesandoReporte)
             {
-                textoEstadoReporte.text = ">>> INTERFERENCIA ELECTROMAGNÉTICA DETECTADA <<<";
+                textoEstadoReporte.text = "Interferencia";
                 textoEstadoReporte.color = new Color(0.45f, 0.95f, 1f, 1f);
             }
             if (luzResplandorTablet != null)
@@ -1027,38 +1049,41 @@ public class TabletSistemaVR : MonoBehaviour
         {
             int seg = Mathf.CeilToInt(Mathf.Max(0f, tiempoRestanteInspeccion));
             int minutoPrevio = Mathf.Clamp(55 + Mathf.FloorToInt((1f - (tiempoRestanteInspeccion / Mathf.Max(1f, duracionInspeccionInicial))) * 5f), 55, 59);
-            textoRelojHeader.text = $"11:{minutoPrevio:00} PM  [INSPECCIÓN {seg:00}s]";
-            textoRelojHeader.color = new Color(0.55f, 0.85f, 1f, 1f);
+            textoRelojHeader.text = $"11:{minutoPrevio:00} PM  ·  Tiempo de gracia ({seg}s)";
+            textoRelojHeader.color = new Color(0.62f, 0.86f, 1f, 1f);
+            ultimoConteoActivasUI = 0;
             return;
         }
 
         string horaTexto = (horaActual == 0) ? "12:00 AM" : $"0{horaActual}:00 AM";
         if (horaActual >= 6)
         {
-            textoRelojHeader.text = "06:00 AM - ¡TURNO COMPLETADO!";
+            textoRelojHeader.text = "06:00 AM  ·  Fin del turno";
             textoRelojHeader.color = colorVerdeSeleccionado;
         }
         else
         {
             int activas = ContarAnomaliasActivas();
-            if (activas >= 4)
+            ultimoConteoActivasUI = activas;
+
+            if (activas >= 3)
             {
-                textoRelojHeader.text = $"{horaTexto}  [¡CRÍTICO: {activas}!]";
-                textoRelojHeader.color = new Color(1f, 0.2f, 0.2f, 1f);
+                textoRelojHeader.text = $"{horaTexto}  ·  Anomalías: Crítico";
+                textoRelojHeader.color = new Color(1f, 0.22f, 0.22f, 1f);
             }
-            else if (activas >= 3)
+            else if (activas == 2)
             {
-                textoRelojHeader.text = $"{horaTexto}  [PELIGRO: {activas}]";
-                textoRelojHeader.color = new Color(1f, 0.32f, 0.25f, 1f);
+                textoRelojHeader.text = $"{horaTexto}  ·  Anomalías: Detectable";
+                textoRelojHeader.color = new Color(1f, 0.52f, 0.30f, 1f);
             }
-            else if (activas > 0)
+            else if (activas == 1)
             {
-                textoRelojHeader.text = $"{horaTexto}  [ALERTA: {activas}]";
-                textoRelojHeader.color = new Color(1f, 0.55f, 0.45f, 1f);
+                textoRelojHeader.text = $"{horaTexto}  ·  Anomalías: Leve";
+                textoRelojHeader.color = new Color(0.98f, 0.80f, 0.42f, 1f);
             }
             else
             {
-                textoRelojHeader.text = horaTexto;
+                textoRelojHeader.text = $"{horaTexto}  ·  Anomalías: Ninguna";
                 textoRelojHeader.color = colorRosaNormal;
             }
         }
@@ -1129,16 +1154,16 @@ public class TabletSistemaVR : MonoBehaviour
         CreateImage(barraSuperior.transform, "Bg_Header", new Vector2(designWidth * uiScale, headerHeight),
             Vector2.zero, new Color(0.09f, 0.1f, 0.14f, 1f)).raycastTarget = false;
 
-        float relojX = portrait ? -150f : -170f;
-        float pausaX = portrait ? 190f : 300f;
-        Vector2 relojSize = portrait ? new Vector2(340f, 56f) : new Vector2(420f, 46f);
-        Vector2 pausaSize = portrait ? new Vector2(240f, 52f) : new Vector2(220f, 42f);
-        int headerFontSize = Mathf.RoundToInt((portrait ? 28f : 22f) * uiScale);
-        textoRelojHeader = CreateText(barraSuperior.transform, "Reloj_Turno", "12:00 AM",
+        float relojX = portrait ? -125f : -125f;
+        float pausaX = portrait ? 205f : 315f;
+        Vector2 relojSize = portrait ? new Vector2(400f, 56f) : new Vector2(540f, 46f);
+        Vector2 pausaSize = portrait ? new Vector2(210f, 52f) : new Vector2(195f, 42f);
+        int headerFontSize = Mathf.RoundToInt((portrait ? 24f : 20f) * uiScale);
+        textoRelojHeader = CreateText(barraSuperior.transform, "Reloj_Turno", "12:00 AM  ·  Anomalías: Ninguna",
             new Vector2(relojX * uiScale, 0f), relojSize * uiScale, headerFontSize,
             TextAnchor.MiddleLeft, colorRosaNormal);
 
-        CreateButton(barraSuperior.transform, "Btn_Pausa_Header", "PAUSA [A]",
+        CreateButton(barraSuperior.transform, "Btn_Pausa_Header", "PAUSA",
             new Vector2(pausaX * uiScale, 0f), pausaSize * uiScale,
             new Color(0.55f, 0.14f, 0.16f, 1f), Color.white,
             Mathf.RoundToInt((portrait ? 24f : 18f) * uiScale), AlternarPausaEnTablet);
@@ -1147,7 +1172,7 @@ public class TabletSistemaVR : MonoBehaviour
         panelAnomalias = CreateRect("App_Reporte_Anomalias", tabletCanvas.transform, canvasSize, Vector2.zero);
 
         float roomLabelY = portrait ? 442f : 212f;
-        CreateText(panelAnomalias.transform, "Lbl_Cuartos", "1. SELECCIONA HABITACIÓN DE LA CASA:",
+        CreateText(panelAnomalias.transform, "Lbl_Cuartos", "Habitación",
             new Vector2(0f, roomLabelY * uiScale), new Vector2((portrait ? 640f : 860f) * uiScale, 32f * uiScale),
             Mathf.RoundToInt((portrait ? 22f : 20f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
@@ -1188,7 +1213,7 @@ public class TabletSistemaVR : MonoBehaviour
         Vector2 typeButtonSize = (portrait ? new Vector2(302f, 56f) : new Vector2(415f, 38f)) * uiScale;
         int typeFontSize = Mathf.RoundToInt((portrait ? 20f : 18f) * uiScale);
 
-        CreateText(panelAnomalias.transform, "Lbl_Tipos", "2. SELECCIONA TIPO DE ANOMALÍA:",
+        CreateText(panelAnomalias.transform, "Lbl_Tipos", "Tipo",
             new Vector2(0f, typeLabelY * uiScale), new Vector2((portrait ? 640f : 860f) * uiScale, 32f * uiScale),
             Mathf.RoundToInt((portrait ? 22f : 20f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
@@ -1212,11 +1237,11 @@ public class TabletSistemaVR : MonoBehaviour
         float reportY = portrait ? -330f : -269f;
         Vector2 statusSize = (portrait ? new Vector2(640f, 44f) : new Vector2(850f, 32f)) * uiScale;
         Vector2 reportSize = (portrait ? new Vector2(620f, 92f) : new Vector2(700f, 46f)) * uiScale;
-        textoEstadoReporte = CreateText(panelAnomalias.transform, "Txt_Estado_Reporte", "Sistema listo para reportar.",
+        textoEstadoReporte = CreateText(panelAnomalias.transform, "Txt_Estado_Reporte", "Turno iniciado",
             new Vector2(0f, statusY * uiScale), statusSize,
             Mathf.RoundToInt((portrait ? 22f : 17f) * uiScale), TextAnchor.MiddleCenter, Color.white);
 
-        botonEnviarReporte = CreateButton(panelAnomalias.transform, "Btn_Enviar_Reporte", "[ ENVIAR REPORTE ]",
+        botonEnviarReporte = CreateButton(panelAnomalias.transform, "Btn_Enviar_Reporte", "Enviar reporte",
             new Vector2(0f, reportY * uiScale), reportSize,
             colorBotonEnviarNormal, Color.white,
             Mathf.RoundToInt((portrait ? 30f : 21f) * uiScale),
@@ -1239,9 +1264,9 @@ public class TabletSistemaVR : MonoBehaviour
         if (audioFeedback && sonidoClickUI) audioFeedback.PlayOneShot(sonidoClickUI);
         EnviarHapticPulso(0.25f, 0.05f);
 
-        if (textoEstadoReporte != null && !procesandoReporte && !glitchActivo)
+        if (textoEstadoReporte != null && !procesandoReporte && !glitchActivo && !enFaseInspeccion)
         {
-            textoEstadoReporte.text = $"Seleccionado: {ObtenerNombreCuartoEspanol(cuartoElegido)} - {ObtenerNombreTipoEspanol(tipoElegido)}";
+            textoEstadoReporte.text = $"{ObtenerNombreCuartoEspanol(cuartoElegido)} · {ObtenerNombreTipoEspanol(tipoElegido)}";
             textoEstadoReporte.color = Color.white;
         }
     }
@@ -1260,9 +1285,9 @@ public class TabletSistemaVR : MonoBehaviour
         if (audioFeedback && sonidoClickUI) audioFeedback.PlayOneShot(sonidoClickUI);
         EnviarHapticPulso(0.25f, 0.05f);
 
-        if (textoEstadoReporte != null && !procesandoReporte && !glitchActivo)
+        if (textoEstadoReporte != null && !procesandoReporte && !glitchActivo && !enFaseInspeccion)
         {
-            textoEstadoReporte.text = $"Seleccionado: {ObtenerNombreCuartoEspanol(cuartoElegido)} - {ObtenerNombreTipoEspanol(tipoElegido)}";
+            textoEstadoReporte.text = $"{ObtenerNombreCuartoEspanol(cuartoElegido)} · {ObtenerNombreTipoEspanol(tipoElegido)}";
             textoEstadoReporte.color = Color.white;
         }
     }

@@ -655,31 +655,105 @@ public class InterruptorLuz : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Idea 7 (Bloque 2): Al corregir una anomalía, el foco del cuarto da un micro-corte seco de 0.16 s
-    /// y la entidad/anomalía desaparece durante ese instante de oscuridad.
-    /// </summary>
-    public static void EjecutarMicroCorteYRestaurar(MonoBehaviour runner, ObjetoAnomalia anomalia)
+    private static GameObject domoCorteOscuroVR;
+    private static Material matCorteOscuroVR;
+
+    private static GameObject ObtenerOCrearDomoCorteOscuro()
     {
-        if (anomalia == null) return;
+        Camera cam = Camera.main;
+        if (cam == null) return null;
+
+        if (domoCorteOscuroVR != null && domoCorteOscuroVR.transform.parent == cam.transform)
+            return domoCorteOscuroVR;
+
+        if (domoCorteOscuroVR != null)
+            Destroy(domoCorteOscuroVR);
+
+        domoCorteOscuroVR = new GameObject("Corte_Oscuro_Reporte_VR");
+        domoCorteOscuroVR.transform.SetParent(cam.transform, false);
+        domoCorteOscuroVR.transform.localPosition = Vector3.zero;
+        domoCorteOscuroVR.transform.localRotation = Quaternion.identity;
+
+        if (matCorteOscuroVR == null)
+        {
+            Shader sh = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
+            matCorteOscuroVR = new Material(sh)
+            {
+                name = "Mat_CorteOscuro_VR",
+                color = Color.black,
+                renderQueue = 4000
+            };
+            matCorteOscuroVR.SetColor("_BaseColor", Color.black);
+        }
+
+        // 6 caras internas formando caja negra envolvente a 0.32m del visor (cubre 360° en Quest 2 y PC sin clipping de near plane)
+        (Vector3 pos, Vector3 rot)[] caras = new (Vector3, Vector3)[]
+        {
+            (new Vector3( 0.00f,  0.00f,  0.32f), new Vector3(  0f,   0f, 0f)),
+            (new Vector3( 0.00f,  0.00f, -0.32f), new Vector3(  0f, 180f, 0f)),
+            (new Vector3( 0.32f,  0.00f,  0.00f), new Vector3(  0f,  90f, 0f)),
+            (new Vector3(-0.32f,  0.00f,  0.00f), new Vector3(  0f, -90f, 0f)),
+            (new Vector3( 0.00f,  0.32f,  0.00f), new Vector3(-90f,   0f, 0f)),
+            (new Vector3( 0.00f, -0.32f,  0.00f), new Vector3( 90f,   0f, 0f)),
+        };
+
+        for (int i = 0; i < caras.Length; i++)
+        {
+            GameObject q = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            q.name = "Cara_Negra_" + i;
+            Collider c = q.GetComponent<Collider>();
+            if (c != null) Destroy(c);
+            q.transform.SetParent(domoCorteOscuroVR.transform, false);
+            q.transform.localPosition = caras[i].pos;
+            q.transform.localEulerAngles = caras[i].rot;
+            q.transform.localScale = new Vector3(0.68f, 0.68f, 1f);
+            MeshRenderer mr = q.GetComponent<MeshRenderer>();
+            if (mr != null)
+            {
+                mr.sharedMaterial = matCorteOscuroVR;
+                mr.shadowCastingMode = ShadowCastingMode.Off;
+                mr.receiveShadows = false;
+            }
+        }
+
+        domoCorteOscuroVR.SetActive(false);
+        return domoCorteOscuroVR;
+    }
+
+    /// <summary>
+    /// Corte total de luz / parpadeo oscuro de cámara (0.28 s) al validar un reporte:
+    /// evita al 100% que cualquier entidad u objeto desaparezca "en el aire" frente al jugador.
+    /// </summary>
+    public static void EjecutarMicroCorteYRestaurar(MonoBehaviour runner, ObjetoAnomalia anomalia, System.Action alRestaurarCallback = null)
+    {
+        if (anomalia == null)
+        {
+            alRestaurarCallback?.Invoke();
+            return;
+        }
         if (runner == null || !runner.gameObject.activeInHierarchy)
         {
             anomalia.RestaurarNormalidad();
+            alRestaurarCallback?.Invoke();
             return;
         }
-        runner.StartCoroutine(RutinaMicroCorteYRestaurar(anomalia));
+        runner.StartCoroutine(RutinaMicroCorteYRestaurar(anomalia, alRestaurarCallback));
     }
 
-    private static IEnumerator RutinaMicroCorteYRestaurar(ObjetoAnomalia anomalia)
+    private static IEnumerator RutinaMicroCorteYRestaurar(ObjetoAnomalia anomalia, System.Action alRestaurarCallback)
     {
         Vector3 posAnom = anomalia != null ? anomalia.ObtenerPosicionVisualActiva() : Vector3.zero;
         InterruptorLuz swCercano = BuscarSwitchMasCercano(posAnom);
         bool teniaLuz = swCercano != null && swCercano.estaEncendida && EnergiaGeneralCasaActiva;
 
+        GameObject domoNegro = ObtenerOCrearDomoCorteOscuro();
+        if (domoNegro != null)
+            domoNegro.SetActive(true);
+
         if (teniaLuz)
             swCercano.AplicarEstadoALuces(false);
 
-        yield return new WaitForSeconds(0.11f);
+        yield return new WaitForSeconds(0.16f);
 
         if (anomalia != null)
         {
@@ -687,10 +761,15 @@ public class InterruptorLuz : MonoBehaviour
             catch (System.Exception ex) { Debug.LogWarning($"[MicroCorte] {ex.Message}"); }
         }
 
-        yield return new WaitForSeconds(0.08f);
+        alRestaurarCallback?.Invoke();
+
+        yield return new WaitForSeconds(0.12f);
 
         if (teniaLuz && swCercano != null)
             swCercano.RefrescarSegunEnergiaGeneral();
+
+        if (domoNegro != null)
+            domoNegro.SetActive(false);
     }
 
     public static InterruptorLuz BuscarSwitchMasCercano(Vector3 pos)

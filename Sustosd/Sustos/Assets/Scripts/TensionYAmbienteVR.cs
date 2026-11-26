@@ -232,8 +232,8 @@ public class TensionYAmbienteVR : MonoBehaviour
             tiempoMirandoEntidad = Mathf.Max(0f, tiempoMirandoEntidad - dt * 1.5f);
         }
 
-        // Idea 8 y Idea 9 (Bloque 2): Evaluar puertas cerradas que tiemblan con entidad adentro y azote por tardar > 18s
-        EvaluarPuertasVivasPorAnomalia(tablet, posCam, dt);
+        // Nota: Se desactivó el movimiento/sonido autónomo de puertas cuando NO son anomalía de puerta,
+        // para que escuchar abrirse una puerta SIEMPRE signifique una anomalía real reportable.
     }
 
     private void EvaluarPuertasVivasPorAnomalia(TabletSistemaVR tablet, Vector3 posCam, float dt)
@@ -407,34 +407,8 @@ public class TensionYAmbienteVR : MonoBehaviour
         Vector3 posEntidad = entidad.ObtenerPosicionVisualActiva();
         bool accionRealizada = false;
 
-        // 1. Intentar cerrar de golpe la puerta abierta más cercana en ese mismo piso
-        PuertaAutoCierre puertaObjetivo = null;
-        float mejorDistPuerta = 6.0f;
-        if (cachePuertas != null)
-        {
-            for (int i = 0; i < cachePuertas.Length; i++)
-            {
-                PuertaAutoCierre p = cachePuertas[i];
-                if (p == null || !p.estaAbierta) continue;
-                Vector3 posP = p.ObtenerPosicionMundial();
-                if (Mathf.Abs(posP.y - posEntidad.y) > 2.2f) continue;
-                float d = Vector3.Distance(posP, posEntidad);
-                if (d < mejorDistPuerta)
-                {
-                    mejorDistPuerta = d;
-                    puertaObjetivo = p;
-                }
-            }
-        }
-
-        if (puertaObjetivo != null)
-        {
-            puertaObjetivo.CerrarPuerta(true);
-            accionRealizada = true;
-        }
-
-        // 2. Si no había puerta abierta cerca (o 50% extra), apagar la luz del cuarto más cercano
-        if (!accionRealizada && InterruptorLuz.EnergiaGeneralCasaActiva && cacheSwitches != null)
+        // Al observar fijamente demasiado tiempo a una entidad humanoide, apagar la luz del cuarto más cercano (NUNCA mover puertas para no fingir anomalías de puerta)
+        if (InterruptorLuz.EnergiaGeneralCasaActiva && cacheSwitches != null)
         {
             InterruptorLuz switchObjetivo = null;
             float mejorDistSw = 6.5f;
@@ -526,11 +500,13 @@ public class TensionYAmbienteVR : MonoBehaviour
             }
             fuenteParanoia3D.Stop();
         }
-        else if (variante == 1 && clipCrujidoMadera != null)
+        else if (variante == 1 && clipCrujidoMadera != null &&
+                 !clipCrujidoMadera.name.ToLowerInvariant().Contains("door") &&
+                 !clipCrujidoMadera.name.ToLowerInvariant().Contains("bathroom"))
         {
-            // Crujido lento de madera vieja
+            // Crujido lento de madera vieja (NUNCA usar audios de puerta aquí)
             fuenteParanoia3D.pitch = Random.Range(0.68f, 0.78f);
-            fuenteParanoia3D.PlayOneShot(clipCrujidoMadera, 0.25f);
+            fuenteParanoia3D.PlayOneShot(clipCrujidoMadera, 0.22f);
         }
         else if (clipGolpeMadera != null)
         {
