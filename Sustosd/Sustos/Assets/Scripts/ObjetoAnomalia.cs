@@ -88,9 +88,28 @@ public class ObjetoAnomalia : MonoBehaviour
     private static Material materialRastroPolvo;
     private static Material materialSombraPureForm;
     private static Material materialOjosBlancosPureForm;
+    private static Material materialHaloLuzOjosPureForm;
+    private static Material materialTunicaPreacher;
+    private static Material materialBocaPreacher;
+    private static Material materialDientesPreacher;
+    private static Material materialRostroPreacher;
+    private static Material materialOjosPreacher;
     private static AudioClip clipZumbidoElectrico;
     private static AudioClip clipSusurrosPreacher;
     private static List<Bounds> cacheVentanasCasa;
+
+    private struct InfoCamaCasa
+    {
+        public MeshRenderer mr;
+        public float offsetColchonY;
+    }
+
+    private static bool cacheMueblesContextualesListo = false;
+    private static readonly Dictionary<string, InfoCamaCasa> cacheCamasPorCuarto = new Dictionary<string, InfoCamaCasa>(System.StringComparer.OrdinalIgnoreCase);
+    private static MeshRenderer cacheBathtubCasaArriba;
+    private static readonly Dictionary<string, MeshRenderer> cacheCoberturaPureForm = new Dictionary<string, MeshRenderer>(System.StringComparer.OrdinalIgnoreCase);
+
+    private MeshRenderer bathtubCasaOcultadaPorCorpse;
 
     private struct PuntoClosetPreacher
     {
@@ -129,7 +148,7 @@ public class ObjetoAnomalia : MonoBehaviour
             cuarto = "Bedroom1",
             posEnCloset = new Vector3(22.85f, 3.74f, -6.92f),
             rotY = 0f,
-            nombrePuertaCloset = "" // Closet vestidor abierto entre Wardrobe y Wardrobe_01
+            nombrePuertaCloset = "Door_002" // Puerta del clóset de la Recámara Principal (Master Bedroom)
         }
     };
 
@@ -529,11 +548,9 @@ public class ObjetoAnomalia : MonoBehaviour
 
         if (nombreLower.StartsWith("anomalia_corpse"))
         {
-            transform.position = new Vector3(pos.x, alturaPiso + 0.04f, pos.z);
+            transform.position = new Vector3(pos.x, alturaPiso + 0.01f, pos.z);
             if (visual != null)
             {
-                if (visual.childCount > 0 && visual.GetChild(0).name == "Capsule")
-                    visual.GetChild(0).localPosition = Vector3.zero;
                 ConfigurarAnimadorEnVisual(visual.gameObject, TipoAnomalia.Corpse, false);
             }
         }
@@ -565,7 +582,10 @@ public class ObjetoAnomalia : MonoBehaviour
             // Preacher: Figura enigmática en rincón/armario identificada por susurros audibles en bucle
             transform.position = new Vector3(pos.x, alturaPiso, pos.z);
             if (visual != null)
+            {
+                AplicarMaterialesTerrorPreacher(visual, null);
                 ConfigurarAnimadorEnVisual(visual.gameObject, TipoAnomalia.Preacher, false);
+            }
 
             AudioSource aud = GetComponent<AudioSource>();
             if (aud == null) aud = gameObject.AddComponent<AudioSource>();
@@ -587,52 +607,276 @@ public class ObjetoAnomalia : MonoBehaviour
         }
         else if (nombreLower.StartsWith("anomalia_flawed"))
         {
-            // Flawed: Figura humana con proporciones, rostro o extremidades distorsionadas
+            // Flawed: Humanoides vestidos con anatomía real y rasgos no humanos (Sin Rostro / Cuello Quebrado)
             transform.position = new Vector3(pos.x, alturaPiso, pos.z);
             if (visual != null)
             {
-                // Distorsionar sutilmente las proporciones para acentuar la anatomía anómala de Flawed
-                visual.localScale = new Vector3(0.84f, 1.16f, 0.88f);
+                visual.localScale = Vector3.one;
+                AplicarMaterialesMateFlawed(visual);
                 ConfigurarAnimadorEnVisual(visual.gameObject, TipoAnomalia.Flawed, true);
             }
         }
     }
 
+    public static void AplicarMaterialesMateFlawed(Transform visual)
+    {
+        if (visual == null) return;
+
+        Shader shUnlit = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
+        foreach (Renderer r in visual.GetComponentsInChildren<Renderer>(true))
+        {
+            if (r == null) continue;
+            string rn = r.gameObject.name;
+
+            if (rn.Contains("FL_CuencaNegra"))
+            {
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                r.receiveShadows = false;
+                if (materialSombraPureForm == null || materialSombraPureForm.shader != shUnlit)
+                {
+                    materialSombraPureForm = new Material(shUnlit)
+                    {
+                        name = "Mat_VacioNegro_Unlit_PureForm",
+                        color = Color.black
+                    };
+                    materialSombraPureForm.SetColor("_BaseColor", Color.black);
+                }
+                r.sharedMaterial = materialSombraPureForm;
+                continue;
+            }
+
+            Material[] mats = r.sharedMaterials;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                Material m = mats[i];
+                if (m == null) continue;
+                if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", Mathf.Min(m.GetFloat("_Smoothness"), 0.14f));
+                if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", Mathf.Min(m.GetFloat("_Glossiness"), 0.14f));
+                if (m.HasProperty("_Metallic")) m.SetFloat("_Metallic", 0.0f);
+                if (m.HasProperty("_SpecularHighlights")) m.SetFloat("_SpecularHighlights", 0.0f);
+                if (m.HasProperty("_EnvironmentReflections")) m.SetFloat("_EnvironmentReflections", 0.0f);
+                if (m.HasProperty("_BumpMap") && m.GetTexture("_BumpMap") != null)
+                    m.EnableKeyword("_NORMALMAP");
+                m.EnableKeyword("_SPECULARHIGHLIGHTS_OFF");
+                m.EnableKeyword("_ENVIRONMENTREFLECTIONS_OFF");
+            }
+        }
+    }
+
+    public static void AplicarMaterialesTerrorPreacher(Transform visual, Texture2D texRostroOverride = null)
+    {
+        if (visual == null) return;
+
+        // CRÍTICO: Usar Unlit tanto en la túnica/cabello negro (#000000) como en el retrato 1:1 del rostro:
+        // Así conserva intactos al 100% los trazos reales de carboncillo/claroscuro de la imagen original y NUNCA se ve como plastilina brillante
+        Shader shUnlit = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Texture") ?? Shader.Find("Standard");
+
+        if (materialTunicaPreacher == null || materialTunicaPreacher.shader != shUnlit)
+        {
+            materialTunicaPreacher = new Material(shUnlit)
+            {
+                name = "Mat_TunicaNegra_Unlit_Preacher",
+                color = Color.black
+            };
+            materialTunicaPreacher.SetColor("_BaseColor", Color.black);
+        }
+
+        Renderer rRostro = null;
+        Renderer rTunica = null;
+
+        foreach (Renderer r in visual.GetComponentsInChildren<Renderer>(true))
+        {
+            string rn = r.gameObject.name;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+
+            if (rn.Contains("PR_Rostro"))
+            {
+                rRostro = r;
+                Texture texExistente = texRostroOverride != null
+                    ? texRostroOverride
+                    : (r.sharedMaterial != null ? r.sharedMaterial.mainTexture : null);
+
+                if (materialRostroPreacher == null || materialRostroPreacher.shader != shUnlit || texRostroOverride != null)
+                {
+                    Color tinteNocturno = new Color(0.68f, 0.68f, 0.74f, 1f);
+                    materialRostroPreacher = new Material(shUnlit)
+                    {
+                        name = "Mat_RostroReal1a1_Unlit_Preacher",
+                        color = tinteNocturno
+                    };
+                    materialRostroPreacher.SetColor("_BaseColor", tinteNocturno);
+                    if (texExistente != null)
+                    {
+                        materialRostroPreacher.SetTexture("_BaseMap", texExistente);
+                        materialRostroPreacher.SetTexture("_MainTex", texExistente);
+                        materialRostroPreacher.mainTexture = texExistente;
+                    }
+                }
+                if (materialRostroPreacher != null && materialRostroPreacher.mainTexture != null)
+                    r.sharedMaterial = materialRostroPreacher;
+            }
+            else
+            {
+                rTunica = r;
+                r.sharedMaterial = materialTunicaPreacher;
+            }
+        }
+
+        if (rRostro != null && rTunica != null && rRostro.transform.parent != null && rRostro.transform.parent != visual)
+        {
+            Transform raizModelo = rRostro.transform.parent;
+            Vector3 dirRostroLocal = visual.InverseTransformPoint(rRostro.bounds.center) - visual.InverseTransformPoint(rTunica.bounds.center);
+            if (dirRostroLocal.z < -0.005f)
+                raizModelo.localRotation *= Quaternion.Euler(0f, 180f, 0f);
+        }
+    }
+
+    public static void AplicarMaterialesAbismalesPureForm(Transform visual)
+    {
+        AsegurarAspectoSombraConOjosBlancos(visual);
+    }
+
+    private static Material ObtenerMaterialHaloLuzOjosPureForm()
+    {
+        if (materialHaloLuzOjosPureForm != null) return materialHaloLuzOjosPureForm;
+
+        int sz = 128;
+        Texture2D tex = new Texture2D(sz, sz, TextureFormat.RGBA32, false)
+        {
+            name = "Tex_HaloLuz_Ojos_PureForm",
+            wrapMode = TextureWrapMode.Clamp,
+            filterMode = FilterMode.Bilinear
+        };
+
+        for (int y = 0; y < sz; y++)
+        {
+            float ny = ((y + 0.5f) / sz) * 2f - 1f;
+            for (int x = 0; x < sz; x++)
+            {
+                float nx = ((x + 0.5f) / sz) * 2f - 1f;
+                float d = Mathf.Sqrt(nx * nx + ny * ny);
+                float nucleo = Mathf.Exp(-d * d * 42f);
+                float haloSuave = Mathf.Exp(-d * 4.2f) * Mathf.Clamp01((1f - d) * 1.6f);
+                float intensidad = Mathf.Clamp01(nucleo + haloSuave * 0.62f);
+                tex.SetPixel(x, y, new Color(1f, 1f, 1f, intensidad));
+            }
+        }
+        tex.Apply();
+
+        Shader shHalo = Shader.Find("Sprites/Default") ?? Shader.Find("Universal Render Pipeline/Unlit");
+        materialHaloLuzOjosPureForm = new Material(shHalo)
+        {
+            name = "Mat_HaloLuz_Ojos_PureForm",
+            color = new Color(0.96f, 0.98f, 1.0f, 0.95f),
+            renderQueue = 3050
+        };
+        materialHaloLuzOjosPureForm.SetTexture("_MainTex", tex);
+        materialHaloLuzOjosPureForm.SetTexture("_BaseMap", tex);
+        materialHaloLuzOjosPureForm.mainTexture = tex;
+        return materialHaloLuzOjosPureForm;
+    }
+
     private static void AsegurarAspectoSombraConOjosBlancos(Transform visual)
     {
-        if (materialSombraPureForm == null)
+        if (visual == null) return;
+
+        // CRÍTICO: Usar SIEMPRE Unlit negro puro (#000000) para que NUNCA refleje luces de la casa ni parezca plastilina o piel en el Screamer
+        Shader shUnlit = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
+        if (materialSombraPureForm == null || materialSombraPureForm.shader != shUnlit)
         {
-            Shader shLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-            materialSombraPureForm = new Material(shLit)
+            materialSombraPureForm = new Material(shUnlit)
             {
-                name = "Mat_Sombra_PureForm"
+                name = "Mat_VacioNegro_Unlit_PureForm",
+                color = Color.black
             };
-            Color negroSombra = new Color(0.02f, 0.02f, 0.025f, 1f);
-            materialSombraPureForm.SetColor("_BaseColor", negroSombra);
-            materialSombraPureForm.color = negroSombra;
-            materialSombraPureForm.SetFloat("_Smoothness", 0.1f);
+            materialSombraPureForm.SetColor("_BaseColor", Color.black);
         }
 
         if (materialOjosBlancosPureForm == null)
         {
-            Shader shUnlit = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
             materialOjosBlancosPureForm = new Material(shUnlit)
             {
-                name = "Mat_Ojos_Blancos_PureForm",
-                color = Color.white
+                name = "Mat_FocoLuzBlanca_PureForm"
             };
-            materialOjosBlancosPureForm.SetColor("_BaseColor", Color.white);
+            Color blancoIncandescente = new Color(3.2f, 3.3f, 3.6f, 1f);
+            materialOjosBlancosPureForm.color = Color.white;
+            materialOjosBlancosPureForm.SetColor("_BaseColor", blancoIncandescente);
         }
+
+        Material matHalo = ObtenerMaterialHaloLuzOjosPureForm();
+
+        Renderer rendererOjosModelados = null;
+        Renderer rendererCuerpoModelado = null;
+        Renderer rendererHalosModelados = null;
 
         foreach (Renderer r in visual.GetComponentsInChildren<Renderer>(true))
         {
-            if (r.gameObject.name.Contains("Ojo_Blanco")) continue;
+            string rn = r.gameObject.name;
+            if (rn.Contains("Ojo_Blanco")) continue;
+
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+
+            Material matObjetivo;
+            if (rn.Contains("PF_HaloOjos"))
+            {
+                rendererHalosModelados = r;
+                matObjetivo = matHalo;
+            }
+            else if (rn.Contains("PF_Ojos"))
+            {
+                rendererOjosModelados = r;
+                matObjetivo = materialOjosBlancosPureForm;
+            }
+            else
+            {
+                rendererCuerpoModelado = r;
+                matObjetivo = materialSombraPureForm;
+            }
+
             Material[] mats = new Material[r.sharedMaterials.Length];
-            for (int i = 0; i < mats.Length; i++) mats[i] = materialSombraPureForm;
+            for (int i = 0; i < mats.Length; i++) mats[i] = matObjetivo;
             r.sharedMaterials = mats;
         }
 
-        // Crear o actualizar los 2 ojos blancos brillantes de Pure Form a altura de rostro (~1.54m)
+        // Si el modelo PureForm_Silueta incluye PF_Ojos y PF_HaloOjos, limpiar esferas antiguas, alinear +Z y añadir micro-luz blanca real en ojos
+        if (rendererOjosModelados != null)
+        {
+            Transform ojoViejoIzq = visual.Find("Ojo_Blanco_Izq");
+            Transform ojoViejoDer = visual.Find("Ojo_Blanco_Der");
+            if (ojoViejoIzq != null) { if (Application.isPlaying) Destroy(ojoViejoIzq.gameObject); else DestroyImmediate(ojoViejoIzq.gameObject); }
+            if (ojoViejoDer != null) { if (Application.isPlaying) Destroy(ojoViejoDer.gameObject); else DestroyImmediate(ojoViejoDer.gameObject); }
+
+            if (rendererCuerpoModelado != null && rendererOjosModelados.transform.parent != null && rendererOjosModelados.transform.parent != visual)
+            {
+                Transform raizModelo = rendererOjosModelados.transform.parent;
+                Vector3 dirOjosLocal = visual.InverseTransformPoint(rendererOjosModelados.bounds.center) - visual.InverseTransformPoint(rendererCuerpoModelado.bounds.center);
+                if (dirOjosLocal.z < -0.005f)
+                    raizModelo.localRotation *= Quaternion.Euler(0f, 180f, 0f);
+            }
+
+            // Luz puntual tenue en los ojos para que brillen sobre muros/marcos cercanos sin iluminar jamás el cuerpo negro Unlit
+            Transform tLuzOjos = visual.Find("Luz_Ojos_PureForm");
+            if (tLuzOjos == null)
+            {
+                GameObject lObj = new GameObject("Luz_Ojos_PureForm");
+                tLuzOjos = lObj.transform;
+                tLuzOjos.SetParent(visual, false);
+            }
+            Vector3 posOjosLocal = visual.InverseTransformPoint((rendererHalosModelados ?? rendererOjosModelados).bounds.center);
+            tLuzOjos.localPosition = posOjosLocal + new Vector3(0f, 0f, 0.04f);
+            Light luzOjos = tLuzOjos.GetComponent<Light>();
+            if (luzOjos == null) luzOjos = tLuzOjos.gameObject.AddComponent<Light>();
+            luzOjos.type = LightType.Point;
+            luzOjos.color = new Color(0.92f, 0.96f, 1.0f, 1f);
+            luzOjos.intensity = 0.28f;
+            luzOjos.range = 0.75f;
+            luzOjos.shadows = LightShadows.None;
+            return;
+        }
+
+        // Fallback únicamente si no estuviera presente PF_Ojos
         for (int lado = -1; lado <= 1; lado += 2)
         {
             string nombreOjo = lado < 0 ? "Ojo_Blanco_Izq" : "Ojo_Blanco_Der";
@@ -651,8 +895,8 @@ public class ObjetoAnomalia : MonoBehaviour
                 ojoT.SetParent(visual, false);
             }
 
-            ojoT.localPosition = new Vector3(lado * 0.055f, 1.54f, 0.14f);
-            ojoT.localScale = new Vector3(0.032f, 0.022f, 0.025f);
+            ojoT.localPosition = new Vector3(lado * 0.045f, 1.62f, 0.11f);
+            ojoT.localScale = new Vector3(0.014f, 0.012f, 0.010f);
             MeshRenderer mrOjo = ojoT.GetComponent<MeshRenderer>();
             if (mrOjo != null)
                 mrOjo.sharedMaterial = materialOjosBlancosPureForm;
@@ -824,17 +1068,10 @@ public class ObjetoAnomalia : MonoBehaviour
             PuntoClosetPreacher closetElegido = closetsDisponibles[Random.Range(0, closetsDisponibles.Count)];
             nombreCuarto = closetElegido.cuarto;
 
-            float pisoCloset = closetElegido.posEnCloset.y;
-            if (Physics.Raycast(closetElegido.posEnCloset + Vector3.up * 1.0f, Vector3.down, out RaycastHit hitC, 2.5f, ~0, QueryTriggerInteraction.Ignore))
-            {
-                if (hitC.point.y < closetElegido.posEnCloset.y + 0.35f)
-                    pisoCloset = hitC.point.y;
-            }
+            Vector3 posFinalPreacher = closetElegido.posEnCloset;
+            float rotFinalPreacherY = closetElegido.rotY;
 
-            transform.position = new Vector3(closetElegido.posEnCloset.x, pisoCloset, closetElegido.posEnCloset.z);
-            transform.rotation = Quaternion.Euler(0f, closetElegido.rotY, 0f);
-
-            // Entreabrir automáticamente la puerta de ese closet para que se vea entreabierta y salgan los susurros de adentro
+            // Entreabrir la puerta del clóset (~42%) y situar al Preacher exactamente detrás de la rendija mirando hacia la habitación (como 1443881f.png)
             puertaClosetAbiertaPorPreacher = null;
             if (!string.IsNullOrEmpty(closetElegido.nombrePuertaCloset))
             {
@@ -842,14 +1079,62 @@ public class ObjetoAnomalia : MonoBehaviour
                 if (objPuertaCloset != null)
                 {
                     PuertaAutoCierre pac = objPuertaCloset.GetComponent<PuertaAutoCierre>();
-                    if (pac != null && !pac.estaAbierta)
+                    if (pac != null)
                     {
-                        pac.AbrirPuertaPorAnomalia();
-                        puertaClosetAbiertaPorPreacher = pac;
+                        if (pac.CalcularPuntoAsomoPreacherDetrasDeRendija(ObtenerCentroDeHabitacion(nombreCuarto), out Vector3 posRendija, out float rotRendijaY))
+                        {
+                            posFinalPreacher = new Vector3(posRendija.x, closetElegido.posEnCloset.y, posRendija.z);
+                            rotFinalPreacherY = rotRendijaY;
+                        }
+
+                        if (!pac.estaAbierta)
+                        {
+                            pac.AbrirEntreabiertaPorPreacher();
+                            puertaClosetAbiertaPorPreacher = pac;
+                        }
                     }
                 }
             }
+
+            float pisoCloset = posFinalPreacher.y;
+            if (Physics.Raycast(posFinalPreacher + Vector3.up * 1.0f, Vector3.down, out RaycastHit hitC, 2.5f, ~0, QueryTriggerInteraction.Ignore))
+            {
+                if (hitC.point.y < posFinalPreacher.y + 0.35f)
+                    pisoCloset = hitC.point.y;
+            }
+
+            transform.position = new Vector3(posFinalPreacher.x, pisoCloset, posFinalPreacher.z);
+            transform.rotation = Quaternion.Euler(0f, rotFinalPreacherY, 0f);
             return;
+        }
+
+        if (tipo == TipoAnomalia.Corpse)
+        {
+            ReubicarCorpseContextual(cam);
+            return;
+        }
+
+        if (tipo == TipoAnomalia.PureForm)
+        {
+            ReubicarPureFormConVariantes(cam);
+            return;
+        }
+
+        if (tipo == TipoAnomalia.Flawed)
+        {
+            Transform visualFlawed = transform.Find("Modelo_Visual_(Reemplazar_Por_FBX)");
+            if (visualFlawed != null)
+            {
+                visualFlawed.localPosition = Vector3.zero;
+                visualFlawed.localRotation = Quaternion.identity;
+                visualFlawed.localScale = Vector3.one;
+                if (visualFlawed.childCount > 1)
+                    ElegirUnicoHijoAleatorio(visualFlawed);
+                AplicarMaterialesMateFlawed(visualFlawed);
+                AnimadorEntidadTerror animFlawed = visualFlawed.GetComponent<AnimadorEntidadTerror>();
+                if (animFlawed != null)
+                    animFlawed.GuardarTransformBase();
+            }
         }
 
         List<PuntoAparicionCuarto> candidatos = new List<PuntoAparicionCuarto>();
@@ -878,11 +1163,330 @@ public class ObjetoAnomalia : MonoBehaviour
                 alturaPiso = hit.point.y;
         }
 
-        if (tipo == TipoAnomalia.Corpse)
-            alturaPiso += 0.04f;
-
         transform.position = new Vector3(posElegida.x, alturaPiso, posElegida.z);
         transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+    }
+
+    private static void InicializarCacheMueblesContextuales()
+    {
+        if (cacheMueblesContextualesListo && cacheCamasPorCuarto.Count > 0) return;
+
+        cacheCamasPorCuarto.Clear();
+        cacheCoberturaPureForm.Clear();
+        cacheBathtubCasaArriba = null;
+
+        GameObject house = GameObject.Find("House");
+        if (house == null) return;
+
+        foreach (MeshRenderer mr in house.GetComponentsInChildren<MeshRenderer>(true))
+        {
+            if (mr == null) continue;
+            string nl = mr.gameObject.name.Trim().ToLowerInvariant();
+            if (nl.Contains("clonmimic") || nl.Contains("collider")) continue;
+
+            Bounds b = mr.bounds;
+            string cuartoMueble = NormalizarCuartoPorPosicion(b.center, "");
+
+            if (nl == "bed_01" || nl == "bed_02" || nl == "bed_03")
+            {
+                // Alturas exactas medidas por raycast sobre la superficie del colchón en House.fbx
+                float offsetColchon = nl == "bed_01" ? 0.742f : (nl == "bed_02" ? 0.659f : 0.653f);
+                cacheCamasPorCuarto[cuartoMueble] = new InfoCamaCasa { mr = mr, offsetColchonY = offsetColchon };
+            }
+            else if (nl == "bathtub" && b.center.y > 3.15f)
+            {
+                // Bañera exclusiva del baño superior (el baño de abajo no tiene bañera)
+                cacheBathtubCasaArriba = mr;
+            }
+            else if (nl == "shelving.002" || (nl == "shelving" && !cacheCoberturaPureForm.ContainsKey("Garage")))
+            {
+                cacheCoberturaPureForm["Garage"] = mr;
+            }
+            else if (nl == "shelving.003")
+            {
+                cacheCoberturaPureForm["Laundry"] = mr;
+            }
+            else if (nl == "shower")
+            {
+                cacheCoberturaPureForm["Bathroom"] = mr;
+            }
+            else if (nl == "refrigerator.001")
+            {
+                cacheCoberturaPureForm["Kitchen"] = mr;
+            }
+            else if (nl == "wardrobe")
+            {
+                cacheCoberturaPureForm["Bedroom1"] = mr;
+            }
+            else if (nl == "armchair_17.001")
+            {
+                cacheCoberturaPureForm["LivingRoom"] = mr;
+            }
+        }
+
+        cacheMueblesContextualesListo = true;
+    }
+
+    private static float DetectarTechoRealSobrePunto(Vector3 puntoBase, string cuarto)
+    {
+        float techoDefault = puntoBase.y > 3.15f ? 6.26f : (cuarto == "Garage" ? 3.25f : 3.42f);
+        Vector3 origen = new Vector3(puntoBase.x, puntoBase.y + 1.35f, puntoBase.z);
+        RaycastHit[] hits = Physics.RaycastAll(origen, Vector3.up, 3.6f, ~0, QueryTriggerInteraction.Ignore);
+        float menorY = float.MaxValue;
+        for (int i = 0; i < hits.Length; i++)
+        {
+            if (hits[i].collider == null || hits[i].collider.isTrigger) continue;
+            if (hits[i].normal.y < -0.65f && hits[i].point.y > puntoBase.y + 2.15f && hits[i].point.y < menorY)
+                menorY = hits[i].point.y;
+        }
+        return menorY < float.MaxValue ? menorY : techoDefault;
+    }
+
+    private static void ElegirUnicoHijoAleatorio(Transform contenedor)
+    {
+        if (contenedor == null || contenedor.childCount == 0) return;
+        int elegido = Random.Range(0, contenedor.childCount);
+        for (int i = 0; i < contenedor.childCount; i++)
+            contenedor.GetChild(i).gameObject.SetActive(i == elegido);
+    }
+
+    private void ReubicarCorpseContextual(Transform cam)
+    {
+        InicializarCacheMueblesContextuales();
+
+        // Si había una bañera ocultada previamente, restaurarla antes de reubicar
+        if (bathtubCasaOcultadaPorCorpse != null)
+        {
+            bathtubCasaOcultadaPorCorpse.enabled = true;
+            bathtubCasaOcultadaPorCorpse = null;
+        }
+
+        Transform visual = transform.Find("Modelo_Visual_(Reemplazar_Por_FBX)");
+        Transform grpAcostado = visual != null ? visual.Find("Corpse_Acostado") : null;
+        Transform grpColgado  = visual != null ? visual.Find("Corpse_Colgado")  : null;
+        Transform grpBanera   = visual != null ? visual.Find("Corpse_Banera")   : null;
+        AnimadorEntidadTerror anim = visual != null ? visual.GetComponent<AnimadorEntidadTerror>() : null;
+
+        List<PuntoAparicionCuarto> candidatos = new List<PuntoAparicionCuarto>();
+        for (int i = 0; i < PuntosHabitaciones.Length; i++)
+        {
+            PuntoAparicionCuarto p = PuntosHabitaciones[i];
+            // Si el cuarto es Bathroom, la única ubicación permitida para Corpse es la bañera del baño superior
+            if (p.cuarto == "Bathroom" && (cacheBathtubCasaArriba == null || grpBanera == null))
+                continue;
+
+            Vector3 refPos = (p.cuarto == "Bathroom" && cacheBathtubCasaArriba != null)
+                ? cacheBathtubCasaArriba.bounds.center
+                : p.posCentro;
+
+            if (cam == null || Vector3.Distance(cam.position, refPos) > 3.2f)
+                candidatos.Add(p);
+        }
+
+        if (candidatos.Count == 0)
+        {
+            for (int i = 0; i < PuntosHabitaciones.Length; i++)
+            {
+                if (PuntosHabitaciones[i].cuarto == "Bathroom" && (cacheBathtubCasaArriba == null || grpBanera == null))
+                    continue;
+                candidatos.Add(PuntosHabitaciones[i]);
+            }
+        }
+
+        PuntoAparicionCuarto elegido = candidatos[Random.Range(0, candidatos.Count)];
+        nombreCuarto = elegido.cuarto;
+
+        // Reiniciar subgrupos y transform local del contenedor visual
+        if (visual != null)
+        {
+            visual.localPosition = Vector3.zero;
+            visual.localRotation = Quaternion.identity;
+            visual.localScale = Vector3.one;
+        }
+        if (grpAcostado != null) grpAcostado.gameObject.SetActive(false);
+        if (grpColgado != null)  grpColgado.gameObject.SetActive(false);
+        if (grpBanera != null)   grpBanera.gameObject.SetActive(false);
+
+        // CASO 1: BAÑO -> EXCLUSIVAMENTE la variante de bañera en el baño de arriba que sí tiene bathtub
+        if (nombreCuarto == "Bathroom" && cacheBathtubCasaArriba != null && grpBanera != null)
+        {
+            Bounds tb = cacheBathtubCasaArriba.bounds;
+            bathtubCasaOcultadaPorCorpse = cacheBathtubCasaArriba;
+            bathtubCasaOcultadaPorCorpse.enabled = false;
+
+            grpBanera.gameObject.SetActive(true);
+            Transform tina = grpBanera.Find("Tina_Con_Cuerpo");
+            if (tina != null)
+            {
+                Transform blood = tina.Find("Blood");
+                if (blood != null) blood.gameObject.SetActive(true);
+
+                string[] nombresCuerposTina = { "deadbody_Tub1", "deadbody_Tub2", "deadbody_Tub3" };
+                int idxCuerpo = Random.Range(0, nombresCuerposTina.Length);
+                for (int c = 0; c < nombresCuerposTina.Length; c++)
+                {
+                    Transform tc = tina.Find(nombresCuerposTina[c]);
+                    if (tc != null) tc.gameObject.SetActive(c == idxCuerpo);
+                }
+            }
+
+            float rotBaneraY = tb.size.x >= tb.size.z ? 0f : 90f;
+            transform.position = new Vector3(tb.center.x, tb.min.y, tb.center.z);
+            transform.rotation = Quaternion.Euler(0f, rotBaneraY, 0f);
+
+            if (anim != null)
+            {
+                anim.modoCorpse = ModoCorpseContextual.EnBanera;
+                anim.GuardarTransformBase();
+            }
+            return;
+        }
+
+        // CASO 2: RECÁMARAS (Bedroom1, Bedroom2, Bedroom3) -> 50% Acostado sobre la cama / 50% Colgado del techo
+        bool esRecamara = nombreCuarto.StartsWith("Bedroom", System.StringComparison.OrdinalIgnoreCase);
+        bool usarColgado = grpColgado != null && grpColgado.childCount > 0 && Random.value < 0.50f;
+
+        if (esRecamara && !usarColgado && cacheCamasPorCuarto.TryGetValue(nombreCuarto, out InfoCamaCasa infoCama) && infoCama.mr != null)
+        {
+            Bounds cb = infoCama.mr.bounds;
+            if (grpAcostado != null)
+            {
+                grpAcostado.gameObject.SetActive(true);
+                ElegirUnicoHijoAleatorio(grpAcostado);
+            }
+
+            // Orientar el cuerpo a lo largo del eje longitudinal de la cama con un leve ángulo orgánico
+            float rotCamaY = (cb.size.x > cb.size.z ? 90f : 0f) + (Random.value < 0.5f ? 0f : 180f) + Random.Range(-9f, 9f);
+            transform.position = new Vector3(cb.center.x, cb.min.y + infoCama.offsetColchonY, cb.center.z);
+            transform.rotation = Quaternion.Euler(0f, rotCamaY, 0f);
+
+            if (anim != null)
+            {
+                anim.modoCorpse = ModoCorpseContextual.Acostado;
+                anim.GuardarTransformBase();
+            }
+            return;
+        }
+
+        // CASO 3: COLGADO DEL TECHO (en Recámara o en Sala/Cocina/Garaje/Lavandería)
+        if (usarColgado && grpColgado != null)
+        {
+            float techoY = DetectarTechoRealSobrePunto(elegido.posCentro, nombreCuarto);
+            grpColgado.gameObject.SetActive(true);
+            ElegirUnicoHijoAleatorio(grpColgado);
+
+            transform.position = new Vector3(elegido.posCentro.x, techoY + 0.02f, elegido.posCentro.z);
+            transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+
+            if (anim != null)
+            {
+                anim.modoCorpse = ModoCorpseContextual.Colgado;
+                anim.GuardarTransformBase();
+            }
+            return;
+        }
+
+        // CASO 4: ACOSTADO EN EL SUELO (Sala, Cocina, Garaje o Lavandería)
+        float pisoY = elegido.posCentro.y;
+        if (Physics.Raycast(elegido.posCentro + Vector3.up * 1.1f, Vector3.down, out RaycastHit hitPiso, 3.0f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            if (hitPiso.point.y < elegido.posCentro.y + 0.35f)
+                pisoY = hitPiso.point.y;
+        }
+
+        if (grpAcostado != null)
+        {
+            grpAcostado.gameObject.SetActive(true);
+            ElegirUnicoHijoAleatorio(grpAcostado);
+        }
+
+        transform.position = new Vector3(elegido.posCentro.x, pisoY + 0.01f, elegido.posCentro.z);
+        transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+
+        if (anim != null)
+        {
+            anim.modoCorpse = ModoCorpseContextual.Acostado;
+            anim.GuardarTransformBase();
+        }
+    }
+
+    private void ReubicarPureFormConVariantes(Transform cam)
+    {
+        InicializarCacheMueblesContextuales();
+
+        List<PuntoAparicionCuarto> candidatos = new List<PuntoAparicionCuarto>();
+        for (int i = 0; i < PuntosHabitaciones.Length; i++)
+        {
+            if (cam == null || Vector3.Distance(cam.position, PuntosHabitaciones[i].posCentro) > 3.2f)
+                candidatos.Add(PuntosHabitaciones[i]);
+        }
+        if (candidatos.Count == 0)
+            candidatos.AddRange(PuntosHabitaciones);
+
+        PuntoAparicionCuarto elegido = candidatos[Random.Range(0, candidatos.Count)];
+        nombreCuarto = elegido.cuarto;
+
+        Transform visual = transform.Find("Modelo_Visual_(Reemplazar_Por_FBX)");
+        AnimadorEntidadTerror anim = visual != null ? visual.GetComponent<AnimadorEntidadTerror>() : null;
+        if (visual != null)
+        {
+            visual.localPosition = Vector3.zero;
+            visual.localRotation = Quaternion.identity;
+        }
+
+        // 50% Variante Directa (se planta de frente al jugador) / 50% Variante Acechador Escondido (se asoma detrás de muebles o rincones)
+        bool varianteEscondida = Random.value < 0.50f;
+        Vector3 posObjetivo = elegido.posCentro;
+        float signoAsomo = Random.value < 0.5f ? 1f : -1f;
+
+        if (varianteEscondida)
+        {
+            posObjetivo = elegido.posRincon;
+
+            // Si el cuarto cuenta con un mueble alto ideal (estantería, regadera, refrigerador, ropero o sofá), asomarse justo detrás de su borde
+            if (cacheCoberturaPureForm.TryGetValue(nombreCuarto, out MeshRenderer mrCov) && mrCov != null)
+            {
+                Bounds bc = mrCov.bounds;
+                Vector3 haciaCentro = elegido.posCentro - bc.center;
+                haciaCentro.y = 0f;
+                if (haciaCentro.sqrMagnitude < 0.01f) haciaCentro = Vector3.forward;
+                haciaCentro.Normalize();
+
+                Vector3 lateral = Vector3.Cross(Vector3.up, haciaCentro).normalized;
+                float medioAncho = Mathf.Max(bc.extents.x, bc.extents.z);
+                Vector3 candidatoAsomo = new Vector3(bc.center.x, elegido.posCentro.y, bc.center.z)
+                                         + lateral * (signoAsomo * (medioAncho + 0.14f))
+                                         - haciaCentro * 0.16f;
+
+                // Verificar que el punto de asomo no quede dentro de un muro
+                if (!Physics.CheckSphere(candidatoAsomo + Vector3.up * 0.9f, 0.16f, ~0, QueryTriggerInteraction.Ignore))
+                    posObjetivo = candidatoAsomo;
+            }
+        }
+
+        float alturaPiso = posObjetivo.y;
+        if (Physics.Raycast(posObjetivo + Vector3.up * 1.1f, Vector3.down, out RaycastHit hitP, 3.0f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            if (hitP.point.y < posObjetivo.y + 0.35f)
+                alturaPiso = hitP.point.y;
+        }
+
+        transform.position = new Vector3(posObjetivo.x, alturaPiso, posObjetivo.z);
+
+        Vector3 mirarHacia = varianteEscondida ? elegido.posCentro : (cam != null ? cam.position : elegido.posCentro);
+        Vector3 dirVista = mirarHacia - transform.position;
+        dirVista.y = 0f;
+        if (dirVista.sqrMagnitude < 0.01f) dirVista = Vector3.forward;
+        transform.rotation = Quaternion.LookRotation(dirVista.normalized, Vector3.up);
+
+        if (anim != null)
+        {
+            anim.modoPureFormEscondido = varianteEscondida;
+            anim.inclinacionAsomoZ = varianteEscondida ? (-signoAsomo * 16.5f) : 0f;
+            anim.offsetRetraccionLocal = new Vector3(signoAsomo * -0.18f, -0.04f, -0.10f);
+            anim.mirarAlJugador = true;
+            anim.GuardarTransformBase();
+        }
     }
 
     private void ReubicarMensajeParedEnHabitacionAleatoria()
@@ -1443,6 +2047,12 @@ public class ObjetoAnomalia : MonoBehaviour
 
         if (rastroDisplacementActual != null)
             rastroDisplacementActual.SetActive(false);
+
+        if (bathtubCasaOcultadaPorCorpse != null)
+        {
+            bathtubCasaOcultadaPorCorpse.enabled = true;
+            bathtubCasaOcultadaPorCorpse = null;
+        }
 
         if (puertaClosetAbiertaPorPreacher != null)
         {

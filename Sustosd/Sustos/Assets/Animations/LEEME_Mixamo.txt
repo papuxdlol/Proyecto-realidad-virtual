@@ -1,0 +1,1 @@
+Coloca aquí tus animaciones descargadas de Adobe Mixamo (.fbx con opción "Without Skin" o "With Skin" en rig Humanoid) para integrarlas junto con Animation Rigging.

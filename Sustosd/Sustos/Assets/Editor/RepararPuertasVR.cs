@@ -13,7 +13,7 @@ using TMPro;
 [InitializeOnLoad]
 public class RepararPuertasVR : EditorWindow
 {
-    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v16.flag";
+    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v22.flag";
 
     static RepararPuertasVR()
     {
@@ -45,8 +45,7 @@ public class RepararPuertasVR : EditorWindow
         InterruptorLuz.HabilitarLucesAdicionalesEnURP();
         AssetDatabase.ImportAsset("Assets/Settings/Project Configuration/Performance URP Config.asset", ImportAssetOptions.ForceUpdate);
         AssetDatabase.ImportAsset("Assets/Settings/Project Configuration/Quality URP Config.asset", ImportAssetOptions.ForceUpdate);
-        AssetDatabase.ImportAsset("Assets/Model/Props/dark-female-apparition-3d-model/source/PureForm_Model.obj", ImportAssetOptions.ForceUpdate);
-        AssetDatabase.ImportAsset("Assets/Model/Props/horror-character/source/Preacher_Model.obj", ImportAssetOptions.ForceUpdate);
+        ConfigurarMaterialesUnlitPermanentesEnFBXGenerados();
 
         // Asegurar DecompressOnLoad en los 3 audios de pisadas para recorte instantáneo sin delay
         AsegurarAudioPisadasDecompressOnLoad();
@@ -398,6 +397,279 @@ public class RepararPuertasVR : EditorWindow
         }
     }
 
+    private static void ConfigurarMaterialesUnlitPermanentesEnFBXGenerados()
+    {
+        if (File.Exists("Assets/Model/Props/Generados/Preacher_Ojos_Tex.png"))
+            AssetDatabase.DeleteAsset("Assets/Model/Props/Generados/Preacher_Ojos_Tex.png");
+
+        if (AssetDatabase.IsValidFolder("Assets/Model/Props/smily-horror-monster"))
+            AssetDatabase.DeleteAsset("Assets/Model/Props/smily-horror-monster");
+
+        AssetDatabase.ImportAsset("Assets/Model/Props/Generados/Preacher_Rostro_Tex.png", ImportAssetOptions.ForceUpdate);
+        TextureImporter ti = AssetImporter.GetAtPath("Assets/Model/Props/Generados/Preacher_Rostro_Tex.png") as TextureImporter;
+        if (ti != null && (ti.wrapMode != TextureWrapMode.Clamp || ti.mipmapEnabled))
+        {
+            ti.wrapMode = TextureWrapMode.Clamp;
+            ti.mipmapEnabled = false;
+            ti.filterMode = FilterMode.Bilinear;
+            ti.SaveAndReimport();
+        }
+
+        string[] normalMapsFlawed = {
+            "Assets/Model/Props/Generados/Flawed_Tela_Normal.png",
+            "Assets/Model/Props/Generados/Flawed_Denim_Normal.png",
+            "Assets/Model/Props/Generados/Flawed_Piel_Normal.png",
+            "Assets/Model/Props/Generados/Flawed_Cabello_Normal.png"
+        };
+        foreach (string rutaNorm in normalMapsFlawed)
+        {
+            if (!File.Exists(rutaNorm)) continue;
+            AssetDatabase.ImportAsset(rutaNorm, ImportAssetOptions.ForceUpdate);
+            TextureImporter tin = AssetImporter.GetAtPath(rutaNorm) as TextureImporter;
+            if (tin != null && (tin.textureType != TextureImporterType.NormalMap || tin.wrapMode != TextureWrapMode.Repeat))
+            {
+                tin.textureType = TextureImporterType.NormalMap;
+                tin.wrapMode = TextureWrapMode.Repeat;
+                tin.mipmapEnabled = true;
+                tin.filterMode = FilterMode.Trilinear;
+                tin.SaveAndReimport();
+            }
+        }
+
+        string[] texsFlawed = {
+            "Assets/Model/Props/Generados/Flawed_Piel_SinRostro_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_Piel_CuelloRoto_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_PlayeraGris_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_CamisaMoteada_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_Jeans_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_Cabello_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_03_PielGrito_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_03_BlusaMostaza_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_03_Bolso_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_03_PantalonAzul_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_04_PielTraje_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_04_CamisaInt_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_04_SacoTraje_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_04_PantalonTraje_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_05_PielBuho_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_05_BlusaJaspeada_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_06_PielVentana_Tex.png",
+            "Assets/Model/Props/Generados/Flawed_06_AbrigoVentana_Tex.png"
+        };
+        foreach (string rutaTex in texsFlawed)
+        {
+            if (!File.Exists(rutaTex)) continue;
+            AssetDatabase.ImportAsset(rutaTex, ImportAssetOptions.ForceUpdate);
+            TextureImporter tif = AssetImporter.GetAtPath(rutaTex) as TextureImporter;
+            bool clampTex = rutaTex.Contains("Piel");
+            if (tif != null && (tif.wrapMode != (clampTex ? TextureWrapMode.Clamp : TextureWrapMode.Repeat) || tif.mipmapEnabled))
+            {
+                tif.wrapMode = clampTex ? TextureWrapMode.Clamp : TextureWrapMode.Repeat;
+                tif.mipmapEnabled = false;
+                tif.filterMode = FilterMode.Bilinear;
+                tif.SaveAndReimport();
+            }
+        }
+
+        Shader shUnlit = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Texture") ?? Shader.Find("Standard");
+        Shader shLitMate = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+        Texture2D texCaraPreacher = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Preacher_Rostro_Tex.png");
+
+        Texture2D normTela = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_Tela_Normal.png");
+        Texture2D normDenim = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_Denim_Normal.png");
+        Texture2D normPiel = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_Piel_Normal.png");
+        Texture2D normPelo = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_Cabello_Normal.png");
+
+        Material matNegroVacio = CrearOActualizarMaterialAsset(
+            "Assets/Model/Props/Generados/Mat_SombraNegra_Unlit.mat",
+            shUnlit,
+            Color.black,
+            null);
+
+        Material matOjosPureForm = CrearOActualizarMaterialAsset(
+            "Assets/Model/Props/Generados/Mat_OjosLuz_PureForm.mat",
+            shUnlit,
+            new Color(3.2f, 3.3f, 3.6f, 1f),
+            null);
+
+        Material matRostroPreacher = CrearOActualizarMaterialAsset(
+            "Assets/Model/Props/Generados/Mat_Preacher_Rostro_1a1.mat",
+            shUnlit,
+            new Color(0.72f, 0.72f, 0.77f, 1f),
+            texCaraPreacher);
+
+        // Materiales PBR Mate con Normal Maps reales (CERO efecto plastilina!) para los 6 modelos Flawed
+        Material matFlPiel1 = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed_Piel1.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_Piel_SinRostro_Tex.png"), normPiel, 0.65f, 0.10f);
+        Material matFlPiel2 = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed_Piel2.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_Piel_CuelloRoto_Tex.png"), normPiel, 0.55f, 0.10f);
+        Material matFlCam1 = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed_Camisa1.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_PlayeraGris_Tex.png"), normTela, 1.15f, 0.05f);
+        Material matFlCam2 = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed_Camisa2.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_CamisaMoteada_Tex.png"), normTela, 1.20f, 0.05f);
+        Material matFlJeans = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed_Jeans.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_Jeans_Tex.png"), normDenim, 1.20f, 0.05f);
+        Material matFlCabello = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed_Cabello.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_Cabello_Tex.png"), normPelo, 1.30f, 0.14f);
+        Material matFlZapatos = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed_Zapatos.mat", shLitMate, new Color(0.06f, 0.06f, 0.07f, 1f),
+            null, normTela, 0.80f, 0.10f);
+
+        Material matFl03Piel = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed03_Piel.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_03_PielGrito_Tex.png"), normPiel, 0.55f, 0.10f);
+        Material matFl03Blusa = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed03_Blusa.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_03_BlusaMostaza_Tex.png"), normTela, 1.15f, 0.05f);
+        Material matFl03Bolso = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed03_Bolso.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_03_Bolso_Tex.png"), normDenim, 1.35f, 0.05f);
+        Material matFl03Pan = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed03_Pantalon.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_03_PantalonAzul_Tex.png"), normTela, 1.10f, 0.05f);
+        Material matFl03Zap = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed03_Zapatos.mat", shLitMate, new Color(0.09f, 0.065f, 0.05f, 1f),
+            null, normTela, 0.80f, 0.10f);
+
+        Material matFl04Piel = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed04_Piel.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_04_PielTraje_Tex.png"), normPiel, 0.65f, 0.10f);
+        Material matFl04CamInt = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed04_CamisaInt.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_04_CamisaInt_Tex.png"), normTela, 1.10f, 0.05f);
+        Material matFl04Saco = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed04_Saco.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_04_SacoTraje_Tex.png"), normDenim, 1.15f, 0.05f);
+        Material matFl04Pan = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed04_Pantalon.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_04_PantalonTraje_Tex.png"), normTela, 1.10f, 0.05f);
+
+        Material matFl05Piel = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed05_Piel.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_05_PielBuho_Tex.png"), normPiel, 0.60f, 0.10f);
+        Material matFl05Blusa = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed05_Blusa.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_05_BlusaJaspeada_Tex.png"), normTela, 1.18f, 0.05f);
+
+        Material matFl06Piel = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed06_Piel.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_06_PielVentana_Tex.png"), normPiel, 0.65f, 0.10f);
+        Material matFl06Abrigo = CrearOActualizarMaterialMateLit("Assets/Model/Props/Generados/Mat_Flawed06_Abrigo.mat", shLitMate, Color.white,
+            AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Flawed_06_AbrigoVentana_Tex.png"), normTela, 1.25f, 0.05f);
+
+        AssetDatabase.ImportAsset("Assets/Model/Props/Generados/PureForm_Silueta.fbx", ImportAssetOptions.ForceUpdate);
+        ModelImporter miPf = AssetImporter.GetAtPath("Assets/Model/Props/Generados/PureForm_Silueta.fbx") as ModelImporter;
+        if (miPf != null)
+        {
+            miPf.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PF_Cuerpo"), matNegroVacio);
+            miPf.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PF_Ojos"), matOjosPureForm);
+            miPf.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PF_HaloOjos"), matOjosPureForm);
+            miPf.SaveAndReimport();
+        }
+
+        AssetDatabase.ImportAsset("Assets/Model/Props/Generados/Preacher_Monje.fbx", ImportAssetOptions.ForceUpdate);
+        ModelImporter miPr = AssetImporter.GetAtPath("Assets/Model/Props/Generados/Preacher_Monje.fbx") as ModelImporter;
+        if (miPr != null)
+        {
+            miPr.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PR_Tunica"), matNegroVacio);
+            miPr.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), "PR_Rostro"), matRostroPreacher);
+            miPr.SaveAndReimport();
+        }
+
+        string[] fbxFlawed = {
+            "Assets/Model/Props/Generados/Flawed_01_SinRostro.fbx",
+            "Assets/Model/Props/Generados/Flawed_02_CuelloRoto.fbx",
+            "Assets/Model/Props/Generados/Flawed_03_MandibulaEstirada.fbx",
+            "Assets/Model/Props/Generados/Flawed_04_HombreTraje.fbx",
+            "Assets/Model/Props/Generados/Flawed_05_CabezaGirada.fbx",
+            "Assets/Model/Props/Generados/Flawed_06_Ventana.fbx"
+        };
+        var mapaMatsFlawed = new (string slot, Material mat)[]
+        {
+            ("FL_Piel_1", matFlPiel1), ("FL_Piel_1.001", matFlPiel1),
+            ("FL_Piel_2", matFlPiel2), ("FL_Piel_2.001", matFlPiel2),
+            ("FL_Camisa_1", matFlCam1),
+            ("FL_Camisa_2", matFlCam2),
+            ("FL_Pantalon", matFlJeans), ("FL_Pantalon.001", matFlJeans),
+            ("FL_Cabello", matFlCabello), ("FL_Cabello.001", matFlCabello),
+            ("FL_Zapatos", matFlZapatos), ("FL_Zapatos.001", matFlZapatos),
+            ("FL_NegroVacio", matNegroVacio),
+
+            ("FL03_Piel", matFl03Piel), ("FL03_PielBrazos", matFl03Piel),
+            ("FL03_Blusa", matFl03Blusa),
+            ("FL03_Bolso", matFl03Bolso),
+            ("FL03_Pantalon", matFl03Pan),
+            ("FL03_Cabello", matFlCabello),
+            ("FL03_Zapatos", matFl03Zap),
+
+            ("FL04_Piel", matFl04Piel), ("FL04_PielManos", matFl04Piel),
+            ("FL04_CamisaInt", matFl04CamInt),
+            ("FL04_Saco", matFl04Saco),
+            ("FL04_Pantalon", matFl04Pan),
+            ("FL04_Cabello", matFlCabello),
+            ("FL04_Zapatos", matFlZapatos),
+
+            ("FL05_Piel", matFl05Piel), ("FL05_PielManos", matFl05Piel),
+            ("FL05_BlusaJaspeada", matFl05Blusa),
+            ("FL05_Jeans", matFlJeans),
+            ("FL05_Cabello", matFlCabello),
+            ("FL05_Zapatos", matFlZapatos),
+
+            ("FL06_PielVentana", matFl06Piel), ("FL06_PielManos", matFl06Piel),
+            ("FL06_Abrigo", matFl06Abrigo),
+            ("FL06_Pantalon", matFl04Pan),
+            ("FL06_Zapatos", matFlZapatos)
+        };
+
+        foreach (string rutaFbxFl in fbxFlawed)
+        {
+            if (!File.Exists(rutaFbxFl)) continue;
+            AssetDatabase.ImportAsset(rutaFbxFl, ImportAssetOptions.ForceUpdate);
+            ModelImporter miFl = AssetImporter.GetAtPath(rutaFbxFl) as ModelImporter;
+            if (miFl != null)
+            {
+                foreach (var par in mapaMatsFlawed)
+                {
+                    if (par.mat != null)
+                        miFl.AddRemap(new AssetImporter.SourceAssetIdentifier(typeof(Material), par.slot), par.mat);
+                }
+                miFl.SaveAndReimport();
+            }
+        }
+    }
+
+    private static Material CrearOActualizarMaterialMateLit(string rutaMat, Shader sh, Color colorBase, Texture2D tex, Texture2D normalTex = null, float bumpScale = 1.0f, float smoothness = 0.06f)
+    {
+        Material m = CrearOActualizarMaterialAsset(rutaMat, sh, colorBase, tex);
+        if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", smoothness);
+        if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", smoothness);
+        if (m.HasProperty("_Metallic")) m.SetFloat("_Metallic", 0.0f);
+        if (m.HasProperty("_SpecularHighlights")) m.SetFloat("_SpecularHighlights", 0.0f);
+        if (m.HasProperty("_EnvironmentReflections")) m.SetFloat("_EnvironmentReflections", 0.0f);
+        if (normalTex != null)
+        {
+            if (m.HasProperty("_BumpMap")) m.SetTexture("_BumpMap", normalTex);
+            if (m.HasProperty("_BumpScale")) m.SetFloat("_BumpScale", bumpScale);
+            m.EnableKeyword("_NORMALMAP");
+        }
+        else
+        {
+            m.DisableKeyword("_NORMALMAP");
+        }
+        m.EnableKeyword("_SPECULARHIGHLIGHTS_OFF");
+        m.EnableKeyword("_ENVIRONMENTREFLECTIONS_OFF");
+        EditorUtility.SetDirty(m);
+        return m;
+    }
+
+    private static Material CrearOActualizarMaterialAsset(string rutaMat, Shader sh, Color colorBase, Texture2D tex)
+    {
+        Material m = AssetDatabase.LoadAssetAtPath<Material>(rutaMat);
+        if (m == null)
+        {
+            m = new Material(sh);
+            AssetDatabase.CreateAsset(m, rutaMat);
+        }
+        else
+        {
+            m.shader = sh;
+        }
+        m.color = colorBase;
+        m.SetColor("_BaseColor", colorBase);
+        m.SetTexture("_BaseMap", tex);
+        m.SetTexture("_MainTex", tex);
+        m.mainTexture = tex;
+        EditorUtility.SetDirty(m);
+        return m;
+    }
+
     private static void AsegurarAudioPisadasDecompressOnLoad()
     {
         string[] rutasPasos = {
@@ -427,44 +699,36 @@ public class RepararPuertasVR : EditorWindow
         int contador = 0;
         AudioClip clipPasosMadera = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/soumages-walking-on-wood-363349.mp3");
 
-        // 1. PURE FORM -> dark-female-apparition (OBJ nativo optimizado para VR)
+        // 1. PURE FORM -> Nuevo modelo Blender PureForm_Silueta.fbx (Silueta negra esbelta con ojos blancos al ras)
         if (ReemplazarVisualEntidad(
             "Anomalia_PureForm_Sala",
-            "Assets/Model/Props/dark-female-apparition-3d-model/source/PureForm_Model.obj",
-            "Assets/Model/Props/dark-female-apparition-3d-model/textures/tripo_image_2acc1ccd-55f9-4be8-a988-c49b100357ff_0_1.jpeg",
-            "Assets/Model/Props/dark-female-apparition-3d-model/textures/tripo_image_2acc1ccd-55f9-4be8-a988-c49b100357ff_2_0.jpeg",
+            "Assets/Model/Props/Generados/PureForm_Silueta.fbx",
+            null,
+            null,
             TipoAnomalia.PureForm,
-            alturaDeseada: 1.72f,
+            alturaDeseada: 1.88f,
             acostadoEnSuelo: false,
             clipAudio: null))
         {
             contador++;
         }
 
-        // 2. PREACHER (MONJE) -> horror-character (OBJ nativo optimizado para VR, con susurros de ObjetoAnomalia)
+        // 2. PREACHER (MONJE) -> Nuevo modelo Blender Preacher_Monje.fbx estilo Mandela Catalogue / Alternate Watch
         if (ReemplazarVisualEntidad(
             "Anomalia_Preacher_Closet",
-            "Assets/Model/Props/horror-character/source/Preacher_Model.obj",
-            "Assets/Model/Props/horror-character/textures/gltf_embedded_0.jpeg",
+            "Assets/Model/Props/Generados/Preacher_Monje.fbx",
+            null,
             null,
             TipoAnomalia.Preacher,
-            alturaDeseada: 1.78f,
+            alturaDeseada: 1.88f,
             acostadoEnSuelo: false,
             clipAudio: null))
         {
             contador++;
         }
 
-        // 3. FLAWED -> smily-horror-monster (shia lebeuofsf.fbx)
-        if (ReemplazarVisualEntidad(
-            "Anomalia_Flawed_Recamara",
-            "Assets/Model/Props/smily-horror-monster/source/shia lebeuofsf.fbx",
-            "Assets/Model/Props/smily-horror-monster/textures/Material.001_Base_Color.png",
-            "Assets/Model/Props/smily-horror-monster/textures/Material.001_Normal_OpenGL.png",
-            TipoAnomalia.Flawed,
-            alturaDeseada: 1.85f,
-            acostadoEnSuelo: false,
-            clipAudio: clipPasosMadera))
+        // 3. FLAWED -> Primeras 2 variantes humanoides con rasgos no humanos (Flawed_01_SinRostro y Flawed_02_CuelloRoto)
+        if (ConfigurarVariantesFlawed(clipPasosMadera))
         {
             contador++;
         }
@@ -492,21 +756,322 @@ public class RepararPuertasVR : EditorWindow
             contador++;
         }
 
-        // 5. CORPSE -> body-bag (Body.fbx)
-        if (ReemplazarVisualEntidad(
-            "Anomalia_Corpse_Cocina",
-            "Assets/Model/Props/body-bag/source/Body.fbx",
-            "Assets/Model/Props/body-bag/textures/Body.jpg",
-            null,
-            TipoAnomalia.Corpse,
-            alturaDeseada: 1.75f,
-            acostadoEnSuelo: true,
-            clipAudio: null))
+        // 5. CORPSE -> Sistema contextual con DeadBody LITE (Acostado en cama/suelo, Colgado del techo, y Bañera exclusiva del baño con tina; NUNCA variante parada)
+        if (ConfigurarVariantesContextualesCorpse())
         {
             contador++;
         }
 
         return contador;
+    }
+
+    private static void LimpiarFisicasYStaticRecursivo(GameObject raiz)
+    {
+        if (raiz == null) return;
+        foreach (Transform t in raiz.GetComponentsInChildren<Transform>(true))
+        {
+            GameObjectUtility.SetStaticEditorFlags(t.gameObject, 0);
+            t.gameObject.isStatic = false;
+        }
+        foreach (Collider c in raiz.GetComponentsInChildren<Collider>(true))
+            Object.DestroyImmediate(c);
+        foreach (Rigidbody rb in raiz.GetComponentsInChildren<Rigidbody>(true))
+            Object.DestroyImmediate(rb);
+        foreach (SkinnedMeshRenderer smr in raiz.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            smr.updateWhenOffscreen = true;
+    }
+
+    private static bool ConfigurarVariantesFlawed(AudioClip clipAudio)
+    {
+        GameObject ancla = GameObject.Find("Anomalia_Flawed_Recamara");
+        if (ancla == null) return false;
+
+        Transform visual = ancla.transform.Find("Modelo_Visual_(Reemplazar_Por_FBX)");
+        if (visual == null)
+        {
+            GameObject vObj = new GameObject("Modelo_Visual_(Reemplazar_Por_FBX)");
+            vObj.transform.SetParent(ancla.transform, false);
+            visual = vObj.transform;
+        }
+
+        visual.localPosition = Vector3.zero;
+        visual.localRotation = Quaternion.identity;
+        visual.localScale = Vector3.one;
+        visual.gameObject.SetActive(true);
+
+        for (int i = visual.childCount - 1; i >= 0; i--)
+        {
+            Undo.DestroyObjectImmediate(visual.GetChild(i).gameObject);
+        }
+
+        string[] rutasVariantes = {
+            "Assets/Model/Props/Generados/Flawed_01_SinRostro.fbx",
+            "Assets/Model/Props/Generados/Flawed_02_CuelloRoto.fbx",
+            "Assets/Model/Props/Generados/Flawed_03_MandibulaEstirada.fbx",
+            "Assets/Model/Props/Generados/Flawed_04_HombreTraje.fbx",
+            "Assets/Model/Props/Generados/Flawed_05_CabezaGirada.fbx"
+        };
+        float[] alturasVariantes = { 1.72f, 1.86f, 1.83f, 1.83f, 1.73f };
+
+        int creadas = 0;
+        for (int i = 0; i < rutasVariantes.Length; i++)
+        {
+            GameObject pf = AssetDatabase.LoadAssetAtPath<GameObject>(rutasVariantes[i]);
+            if (pf == null) continue;
+
+            GameObject inst = (GameObject)PrefabUtility.InstantiatePrefab(pf, visual);
+            if (inst == null)
+                inst = Object.Instantiate(pf, visual);
+
+            inst.name = "Flawed_Variante_" + creadas;
+            inst.transform.localPosition = Vector3.zero;
+            inst.transform.localRotation = Quaternion.identity;
+            inst.transform.localScale = Vector3.one;
+
+            LimpiarFisicasYStaticRecursivo(inst);
+
+            // Asegurar que el rostro mire hacia +Z local del contenedor visual (en CabezaGirada los zapatos apuntan de espaldas a propósito)
+            Renderer rZap = null;
+            Renderer rPan = null;
+            foreach (Renderer r in inst.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r.gameObject.name.Contains("FL_Zapatos")) rZap = r;
+                else if (r.gameObject.name.Contains("FL_Pantalon")) rPan = r;
+            }
+            if (rZap != null && rPan != null)
+            {
+                float dzPuntaPie = visual.InverseTransformPoint(rZap.bounds.center).z - visual.InverseTransformPoint(rPan.bounds.center).z;
+                bool cuerpoDeEspaldas = rutasVariantes[i].Contains("CabezaGirada");
+                if (cuerpoDeEspaldas ? (dzPuntaPie > 0.005f) : (dzPuntaPie < -0.005f))
+                    inst.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            }
+
+            NormalizarTamanoYApoyarEnSuelo(ancla.transform, visual, inst.transform, alturasVariantes[i], false);
+            inst.SetActive(creadas == 0);
+            creadas++;
+        }
+
+        ObjetoAnomalia.AplicarMaterialesMateFlawed(visual);
+
+        AnimadorEntidadTerror anim = visual.GetComponent<AnimadorEntidadTerror>();
+        if (anim == null)
+            anim = Undo.AddComponent<AnimadorEntidadTerror>(visual.gameObject);
+        anim.tipoEntidad = TipoAnomalia.Flawed;
+        anim.mirarAlJugador = true;
+        anim.GuardarTransformBase();
+
+        ObjetoAnomalia anom = ancla.GetComponent<ObjetoAnomalia>();
+        if (anom != null && anom.posiblesVariantes != null)
+        {
+            Undo.RecordObject(anom, "Actualizar Variantes Flawed");
+            foreach (var v in anom.posiblesVariantes)
+            {
+                if (v == null) continue;
+                v.objetoExtraActivable = visual.gameObject;
+                if (clipAudio != null)
+                {
+                    AudioSource aud = ancla.GetComponent<AudioSource>();
+                    if (aud == null) aud = Undo.AddComponent<AudioSource>(ancla);
+                    aud.clip = clipAudio;
+                    aud.playOnAwake = false;
+                    aud.spatialBlend = 1f;
+                    aud.volume = 0.45f;
+                    aud.pitch = 0.82f;
+                    aud.minDistance = 1.0f;
+                    aud.maxDistance = 10.0f;
+                    v.audioEvento = aud;
+                    v.sonidoEnBucle = false;
+                }
+            }
+            EditorUtility.SetDirty(anom);
+        }
+
+        visual.gameObject.SetActive(false);
+        EditorUtility.SetDirty(ancla);
+        return creadas > 0;
+    }
+
+    private static bool ConfigurarVariantesContextualesCorpse()
+    {
+        GameObject ancla = GameObject.Find("Anomalia_Corpse_Cocina");
+        if (ancla == null) return false;
+
+        Transform visual = ancla.transform.Find("Modelo_Visual_(Reemplazar_Por_FBX)");
+        if (visual == null)
+        {
+            GameObject vObj = new GameObject("Modelo_Visual_(Reemplazar_Por_FBX)");
+            vObj.transform.SetParent(ancla.transform, false);
+            visual = vObj.transform;
+        }
+
+        visual.localPosition = Vector3.zero;
+        visual.localRotation = Quaternion.identity;
+        visual.localScale = Vector3.one;
+        visual.gameObject.SetActive(true);
+
+        for (int i = visual.childCount - 1; i >= 0; i--)
+        {
+            Undo.DestroyObjectImmediate(visual.GetChild(i).gameObject);
+        }
+
+        // A) CORPSE ACOSTADO (Para camas en Bedroom1..3 y suelo en cuartos sin cama; 3 variantes visuales de DeadBody LITE)
+        GameObject grpAcostado = new GameObject("Corpse_Acostado");
+        grpAcostado.transform.SetParent(visual, false);
+        string[] rutasAcostado = {
+            "Assets/DeadBody LITE/Prefabs/Body_Only/DeadBody (1).prefab",
+            "Assets/DeadBody LITE/Prefabs/Body_Only/DeadBody (3).prefab",
+            "Assets/DeadBody LITE/Prefabs/Body_Only/DeadBody (5).prefab"
+        };
+        int posesAcostado = 0;
+        for (int i = 0; i < rutasAcostado.Length; i++)
+        {
+            GameObject pf = AssetDatabase.LoadAssetAtPath<GameObject>(rutasAcostado[i]);
+            if (pf == null) continue;
+            GameObject inst = Object.Instantiate(pf, grpAcostado.transform);
+            inst.name = "Pose_" + posesAcostado;
+            inst.transform.localPosition = Vector3.zero;
+            inst.transform.localRotation = Quaternion.identity;
+            inst.transform.localScale = Vector3.one;
+            LimpiarFisicasYStaticRecursivo(inst);
+
+            Renderer[] rs = inst.GetComponentsInChildren<Renderer>(true);
+            if (rs.Length > 0)
+            {
+                Bounds b = rs[0].bounds;
+                for (int r = 1; r < rs.Length; r++) b.Encapsulate(rs[r].bounds);
+                if (b.size.y > Mathf.Max(b.size.x, b.size.z))
+                {
+                    inst.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+                    b = rs[0].bounds;
+                    for (int r = 1; r < rs.Length; r++) b.Encapsulate(rs[r].bounds);
+                }
+                inst.transform.position += new Vector3(
+                    grpAcostado.transform.position.x - b.center.x,
+                    grpAcostado.transform.position.y - b.min.y,
+                    grpAcostado.transform.position.z - b.center.z
+                );
+            }
+            inst.SetActive(posesAcostado == 0);
+            posesAcostado++;
+        }
+
+        // B) CORPSE COLGADO DEL TECHO (2 variantes de soga; pivote superior y=0 justo en la punta de la cuerda para anclar al techo)
+        GameObject grpColgado = new GameObject("Corpse_Colgado");
+        grpColgado.transform.SetParent(visual, false);
+        string[] rutasColgado = {
+            "Assets/DeadBody LITE/Prefabs/Hanging_Body/Hanging 1/Deadbody_Hanging (1).prefab",
+            "Assets/DeadBody LITE/Prefabs/Hanging_Body/Hanging 2/Deadbody_HangingS2 (2).prefab"
+        };
+        int posesColgado = 0;
+        for (int i = 0; i < rutasColgado.Length; i++)
+        {
+            GameObject pf = AssetDatabase.LoadAssetAtPath<GameObject>(rutasColgado[i]);
+            if (pf == null) continue;
+            GameObject inst = Object.Instantiate(pf, grpColgado.transform);
+            inst.name = "Colgado_" + posesColgado;
+            inst.transform.localPosition = Vector3.zero;
+            inst.transform.localRotation = Quaternion.identity;
+            inst.transform.localScale = Vector3.one;
+
+            // Quitar el script ExecuteInEditMode DeadBodyHanging para que no sobreescriba la cuerda cada frame
+            foreach (MonoBehaviour mb in inst.GetComponentsInChildren<MonoBehaviour>(true))
+            {
+                if (mb != null && mb.GetType().Name == "DeadBodyHanging")
+                    Object.DestroyImmediate(mb);
+            }
+            LimpiarFisicasYStaticRecursivo(inst);
+
+            Renderer[] rs = inst.GetComponentsInChildren<Renderer>(true);
+            if (rs.Length > 0)
+            {
+                Bounds b = rs[0].bounds;
+                for (int r = 1; r < rs.Length; r++) b.Encapsulate(rs[r].bounds);
+                // Ajustar altura total (~2.12m cuerda + cuerpo) para que en Piso 1 y Piso 2 los pies siempre queden suspendidos en el aire
+                if (b.size.y > 0.01f)
+                {
+                    float factor = 2.12f / b.size.y;
+                    inst.transform.localScale *= factor;
+                    b = rs[0].bounds;
+                    for (int r = 1; r < rs.Length; r++) b.Encapsulate(rs[r].bounds);
+                }
+                // Alinear el extremo SUPERIOR de la cuerda (b.max.y) en y=0 local para colgar directamente del techo
+                inst.transform.position += new Vector3(
+                    grpColgado.transform.position.x - b.center.x,
+                    grpColgado.transform.position.y - b.max.y,
+                    grpColgado.transform.position.z - b.center.z
+                );
+            }
+            inst.SetActive(posesColgado == 0);
+            posesColgado++;
+        }
+        grpColgado.SetActive(false);
+
+        // C) CORPSE EN BAÑERA (Exclusivo para el baño superior con bathtub; incluye sangre + 3 cuerpos seleccionables)
+        GameObject grpBanera = new GameObject("Corpse_Banera");
+        grpBanera.transform.SetParent(visual, false);
+        GameObject pfTub = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/DeadBody LITE/Prefabs/Bath_Tub/Bathtub With Bodies (1).prefab");
+        if (pfTub != null)
+        {
+            GameObject instTub = Object.Instantiate(pfTub, grpBanera.transform);
+            instTub.name = "Tina_Con_Cuerpo";
+            instTub.transform.localPosition = Vector3.zero;
+            instTub.transform.localRotation = Quaternion.identity;
+            instTub.transform.localScale = new Vector3(0.87f, 0.98f, 0.76f);
+
+            foreach (MonoBehaviour mb in instTub.GetComponentsInChildren<MonoBehaviour>(true))
+            {
+                if (mb != null && mb.GetType().Name == "BathTub")
+                    Object.DestroyImmediate(mb);
+            }
+            LimpiarFisicasYStaticRecursivo(instTub);
+
+            Transform tBlood = instTub.transform.Find("Blood");
+            if (tBlood != null) tBlood.gameObject.SetActive(true);
+
+            Transform tB1 = instTub.transform.Find("deadbody_Tub1");
+            Transform tB2 = instTub.transform.Find("deadbody_Tub2");
+            Transform tB3 = instTub.transform.Find("deadbody_Tub3");
+            if (tB1 != null) tB1.gameObject.SetActive(true);
+            if (tB2 != null) tB2.gameObject.SetActive(false);
+            if (tB3 != null) tB3.gameObject.SetActive(false);
+
+            Transform tMeshTub = instTub.transform.Find("Bathtub");
+            Renderer mrRef = tMeshTub != null ? tMeshTub.GetComponent<Renderer>() : instTub.GetComponentInChildren<Renderer>(true);
+            if (mrRef != null)
+            {
+                Bounds bt = mrRef.bounds;
+                instTub.transform.position += new Vector3(
+                    grpBanera.transform.position.x - bt.center.x,
+                    grpBanera.transform.position.y - bt.min.y,
+                    grpBanera.transform.position.z - bt.center.z
+                );
+            }
+        }
+        grpBanera.SetActive(false);
+
+        AnimadorEntidadTerror anim = visual.GetComponent<AnimadorEntidadTerror>();
+        if (anim == null)
+            anim = Undo.AddComponent<AnimadorEntidadTerror>(visual.gameObject);
+        anim.tipoEntidad = TipoAnomalia.Corpse;
+        anim.mirarAlJugador = false;
+        anim.modoCorpse = ModoCorpseContextual.Acostado;
+        anim.GuardarTransformBase();
+
+        ObjetoAnomalia anom = ancla.GetComponent<ObjetoAnomalia>();
+        if (anom != null && anom.posiblesVariantes != null)
+        {
+            Undo.RecordObject(anom, "Actualizar Variantes Corpse Contextual");
+            foreach (var v in anom.posiblesVariantes)
+            {
+                if (v == null) continue;
+                v.objetoExtraActivable = visual.gameObject;
+            }
+            EditorUtility.SetDirty(anom);
+        }
+
+        visual.gameObject.SetActive(false);
+        EditorUtility.SetDirty(ancla);
+        return posesAcostado > 0;
     }
 
     private static bool ReemplazarVisualEntidad(
@@ -556,15 +1121,24 @@ public class RepararPuertasVR : EditorWindow
         instancia.transform.localRotation = Quaternion.identity;
         instancia.transform.localScale = Vector3.one;
 
-        // Eliminar colliders internos del modelo de terror para que no bloqueen el paso del jugador
-        foreach (Collider c in instancia.GetComponentsInChildren<Collider>(true))
-            Object.DestroyImmediate(c);
+        // Eliminar colliders, rigidbodies y flags Static internos para evitar bloqueos y Static Batching roto al moverse
+        LimpiarFisicasYStaticRecursivo(instancia);
 
-        // Aplicar material URP con su textura correspondiente
+        // Aplicar material URP con su textura correspondiente (o materiales de sombra/ojos para PureForm_Silueta)
         Texture2D texBase = !string.IsNullOrEmpty(rutaTexturaBase) ? AssetDatabase.LoadAssetAtPath<Texture2D>(rutaTexturaBase) : null;
         Texture2D texNorm = !string.IsNullOrEmpty(rutaTexturaNormal) ? AssetDatabase.LoadAssetAtPath<Texture2D>(rutaTexturaNormal) : null;
 
-        if (texBase != null)
+        if (tipo == TipoAnomalia.PureForm && texBase == null)
+        {
+            // PureForm usa material 100% Unlit negro absoluto (#000000) sin reflejos ("plastilina"/"piel") + focos de luz blancos con halo óptico
+            ObjetoAnomalia.AplicarMaterialesAbismalesPureForm(visual);
+        }
+        else if (tipo == TipoAnomalia.Preacher && texBase == null)
+        {
+            Texture2D texRostroPr = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Model/Props/Generados/Preacher_Rostro_Tex.png");
+            ObjetoAnomalia.AplicarMaterialesTerrorPreacher(visual, texRostroPr);
+        }
+        else if (texBase != null)
         {
             Shader urpLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
             Material mat = new Material(urpLit)

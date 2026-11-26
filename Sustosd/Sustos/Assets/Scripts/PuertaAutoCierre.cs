@@ -25,6 +25,7 @@ public class PuertaAutoCierre : MonoBehaviour
 
     [HideInInspector] public bool estaAbierta = false;
     [HideInInspector] public bool abiertaPorAnomalia = false;
+    private bool entreabiertaPorPreacher = false;
 
     private Vector3 puntoBisagraMundial;
     private Vector3 posCerradaMundial;
@@ -362,9 +363,10 @@ public class PuertaAutoCierre : MonoBehaviour
 
     public void AbrirPuerta()
     {
-        if (estaAbierta) return;
+        if (estaAbierta && !entreabiertaPorPreacher) return;
         estaAbierta = true;
         abiertaPorAnomalia = false;
+        entreabiertaPorPreacher = false;
         pendienteSonidoCierre = false;
 
         if (audioPuerta != null && sonidoAbrir != null)
@@ -387,6 +389,7 @@ public class PuertaAutoCierre : MonoBehaviour
         }
         estaAbierta = true;
         abiertaPorAnomalia = true;
+        entreabiertaPorPreacher = false;
         pendienteSonidoCierre = false;
 
         if (audioPuerta != null)
@@ -401,11 +404,70 @@ public class PuertaAutoCierre : MonoBehaviour
         }
     }
 
+    public void AbrirEntreabiertaPorPreacher()
+    {
+        if (rutinaAutoCierre != null)
+        {
+            StopCoroutine(rutinaAutoCierre);
+            rutinaAutoCierre = null;
+        }
+        estaAbierta = true;
+        abiertaPorAnomalia = true;
+        entreabiertaPorPreacher = true;
+        pendienteSonidoCierre = false;
+
+        if (audioPuerta != null)
+        {
+            AudioClip clipAnomalo = sonidoAbrirAnomalia != null ? sonidoAbrirAnomalia : sonidoAbrir;
+            if (clipAnomalo != null)
+            {
+                audioPuerta.Stop();
+                audioPuerta.pitch = 0.84f;
+                audioPuerta.PlayOneShot(clipAnomalo, 0.65f);
+            }
+        }
+    }
+
+    public bool CalcularPuntoAsomoPreacherDetrasDeRendija(Vector3 centroHabitacion, out Vector3 posPreacher, out float rotY)
+    {
+        posPreacher = posCerradaMundial;
+        rotY = 0f;
+
+        if (hitboxPositivo == null) return false;
+
+        // Calcular el centro de la hoja cuando está cerrada y el borde de apertura opuesto a la bisagra
+        Quaternion invRotActual = Quaternion.Inverse(transform.rotation);
+        Vector3 offsetCentroLocal = invRotActual * (hitboxPositivo.transform.position - transform.position);
+        Vector3 centroCerrado = posCerradaMundial + (rotCerradaMundial * offsetCentroLocal);
+
+        Vector3 deBisagraACentro = centroCerrado - puntoBisagraMundial;
+        deBisagraACentro.y = 0f;
+        if (deBisagraACentro.sqrMagnitude < 0.001f)
+            return false;
+
+        Vector3 bordeRendija = puntoBisagraMundial + deBisagraACentro * 1.55f;
+        Vector3 haciaHabitacion = centroHabitacion - centroCerrado;
+        haciaHabitacion.y = 0f;
+        if (haciaHabitacion.sqrMagnitude < 0.001f)
+            haciaHabitacion = Vector3.forward;
+
+        // Proyectar sobre la normal perpendicular a la hoja cerrada para mirar recto hacia afuera de la rendija del clóset
+        Vector3 tangenteHoja = deBisagraACentro.normalized;
+        Vector3 normalHoja = new Vector3(-tangenteHoja.z, 0f, tangenteHoja.x);
+        if (Vector3.Dot(normalHoja, haciaHabitacion) < 0f)
+            normalHoja = -normalHoja;
+
+        posPreacher = bordeRendija - normalHoja * 0.30f;
+        rotY = Quaternion.LookRotation(normalHoja, Vector3.up).eulerAngles.y;
+        return true;
+    }
+
     public void CerrarPuerta(bool esAzoteAnomalia)
     {
         if (!estaAbierta && Mathf.Abs(anguloActual) < 0.1f) return;
         estaAbierta = false;
         abiertaPorAnomalia = false;
+        entreabiertaPorPreacher = false;
 
         if (rutinaAutoCierre != null)
         {
@@ -464,7 +526,8 @@ public class PuertaAutoCierre : MonoBehaviour
 
     void Update()
     {
-        float objetivo = estaAbierta ? anguloAbierta : 0f;
+        float anguloMetaAbierta = entreabiertaPorPreacher ? (anguloAbierta * 0.42f) : anguloAbierta;
+        float objetivo = estaAbierta ? anguloMetaAbierta : 0f;
         float vel = (estaAbierta && abiertaPorAnomalia) ? velocidadGiroAnomalia : velocidadGiro;
 
         if (Mathf.Abs(anguloActual - objetivo) > 0.05f)

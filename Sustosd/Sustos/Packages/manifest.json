@@ -4,6 +4,7 @@
     "com.unity.2d.tilemap": "1.0.0",
     "com.unity.ai.navigation": "2.0.14",
     "com.unity.analytics": "3.8.2",
+    "com.unity.animation.rigging": "6.6.0",
     "com.unity.burst": "2.0.0",
     "com.unity.collab-proxy": "2.13.6",
     "com.unity.feature.development": "1.0.2",

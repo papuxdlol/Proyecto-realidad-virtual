@@ -1,9 +1,22 @@
 using UnityEngine;
 
+public enum ModoCorpseContextual
+{
+    Acostado = 0,
+    Colgado = 1,
+    EnBanera = 2
+}
+
 public sealed class AnimadorEntidadTerror : MonoBehaviour
 {
     public TipoAnomalia tipoEntidad = TipoAnomalia.PureForm;
     public bool mirarAlJugador = true;
+
+    [Header("Variantes Contextuales (PureForm y Corpse)")]
+    public bool modoPureFormEscondido = false;
+    public float inclinacionAsomoZ = 0f;
+    public Vector3 offsetRetraccionLocal = new Vector3(-0.18f, -0.03f, -0.08f);
+    public ModoCorpseContextual modoCorpse = ModoCorpseContextual.Acostado;
 
     private Vector3 posBaseLocal;
     private Quaternion rotBaseLocal;
@@ -15,6 +28,8 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
     private Quaternion rotEspasmo = Quaternion.identity;
     private Vector3 offsetEspasmo = Vector3.zero;
     private float semillaAleatoria;
+    private float tiempoMiradoAcecho;
+    private float factorRetraccionAcecho;
 
     private void Awake()
     {
@@ -27,6 +42,8 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         GuardarTransformBase();
         tiempoProximoEspasmo = Time.time + Random.Range(0.8f, 2.2f);
         duracionEspasmoActual = 0f;
+        tiempoMiradoAcecho = 0f;
+        factorRetraccionAcecho = 0f;
     }
 
     public void GuardarTransformBase()
@@ -94,15 +111,50 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
 
     private void AnimarPureForm(float t, bool enEspasmo)
     {
-        // Levitación fantasmal suave + respiración profunda + seguimiento lento al jugador
-        float flotarY = Mathf.Sin(t * 2.1f) * 0.055f;
-        float vaivenX = Mathf.Cos(t * 1.3f) * 0.03f;
-        transform.localPosition = posBaseLocal + new Vector3(vaivenX, flotarY, 0f) + (enEspasmo ? offsetEspasmo : Vector3.zero);
+        float resp = 1f + Mathf.Sin(t * 2.1f) * 0.016f;
+        transform.localScale = new Vector3(escalaBaseLocal.x * resp, escalaBaseLocal.y, escalaBaseLocal.z * resp);
 
-        float resp = 1f + Mathf.Sin(t * 2.6f) * 0.025f;
-        transform.localScale = new Vector3(escalaBaseLocal.x * resp, escalaBaseLocal.y / Mathf.Sqrt(resp), escalaBaseLocal.z * resp);
+        if (modoPureFormEscondido)
+        {
+            // Variante Acechador / Escondido: asomado detrás de muebles/marcos con inclinación lateral;
+            // si el jugador cruza miradas con él, se retrae sutilmente hacia su escondite.
+            bool jugadorLoMira = false;
+            if (camTransform != null)
+            {
+                Vector3 posCabeza = transform.position + Vector3.up * 1.66f;
+                Vector3 haciaEntidad = posCabeza - camTransform.position;
+                float dist = haciaEntidad.magnitude;
+                if (dist > 0.25f && dist < 8.5f)
+                {
+                    float dot = Vector3.Dot(camTransform.forward, haciaEntidad / dist);
+                    if (dot > 0.87f)
+                        jugadorLoMira = true;
+                }
+            }
 
-        OrientarSutilmenteHaciaJugador(1.8f, enEspasmo, Mathf.Sin(t * 1.5f) * 4f);
+            if (jugadorLoMira)
+                tiempoMiradoAcecho = Mathf.Min(tiempoMiradoAcecho + Time.deltaTime, 2.0f);
+            else
+                tiempoMiradoAcecho = Mathf.Max(0f, tiempoMiradoAcecho - Time.deltaTime * 0.7f);
+
+            float metaRetraccion = tiempoMiradoAcecho > 0.65f ? 1f : 0f;
+            factorRetraccionAcecho = Mathf.MoveTowards(factorRetraccionAcecho, metaRetraccion, Time.deltaTime * 1.35f);
+
+            Vector3 microVaiven = new Vector3(Mathf.Sin(t * 1.1f) * 0.012f, Mathf.Sin(t * 1.7f) * 0.008f, 0f);
+            transform.localPosition = posBaseLocal + Vector3.Lerp(Vector3.zero, offsetRetraccionLocal, factorRetraccionAcecho) + microVaiven;
+
+            float anguloAsomoActual = Mathf.Lerp(inclinacionAsomoZ, inclinacionAsomoZ * 0.32f, factorRetraccionAcecho) + Mathf.Sin(t * 1.2f) * 1.5f;
+            OrientarSutilmenteHaciaJugador(2.2f, false, anguloAsomoActual);
+        }
+        else
+        {
+            // Variante Directa / Confrontacional: erguido e imponente frente al jugador, mirándolo fijamente
+            float derivaY = Mathf.Sin(t * 1.8f) * 0.012f;
+            float vaivenX = Mathf.Cos(t * 1.1f) * 0.018f;
+            transform.localPosition = posBaseLocal + new Vector3(vaivenX, derivaY, 0f) + (enEspasmo ? offsetEspasmo * 0.5f : Vector3.zero);
+
+            OrientarSutilmenteHaciaJugador(2.6f, enEspasmo, Mathf.Sin(t * 1.3f) * 2.2f);
+        }
     }
 
     private void AnimarPreacher(float t, bool enEspasmo)
@@ -123,15 +175,14 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
 
     private void AnimarFlawed(float t, bool enEspasmo)
     {
-        // Monstruo deforme: respiración asimétrica + sacudidas bruscas y mirada fija al jugador
-        float respX = 1f + Mathf.Sin(t * 5.2f) * 0.045f;
-        float respY = 1f + Mathf.Cos(t * 4.1f) * 0.035f;
-        transform.localScale = new Vector3(escalaBaseLocal.x * respX, escalaBaseLocal.y * respY, escalaBaseLocal.z * respX);
+        // Humanoide anómalo (Alternate Watch): quietud humana inquietante + respiración orgánica sutil + micro-espasmos bruscos ocasionales
+        float resp = 1f + Mathf.Sin(t * 1.9f) * 0.011f;
+        transform.localScale = new Vector3(escalaBaseLocal.x * resp, escalaBaseLocal.y, escalaBaseLocal.z * resp);
 
-        float pasoLateral = Mathf.Sin(t * 2.2f) * 0.045f;
-        transform.localPosition = posBaseLocal + new Vector3(pasoLateral, Mathf.Abs(Mathf.Cos(t * 4.4f)) * 0.025f, 0f) + (enEspasmo ? offsetEspasmo * 1.6f : Vector3.zero);
+        float balanceoSutil = Mathf.Sin(t * 0.95f) * 0.014f;
+        transform.localPosition = posBaseLocal + new Vector3(balanceoSutil, 0f, 0f) + (enEspasmo ? offsetEspasmo * 1.15f : Vector3.zero);
 
-        OrientarSutilmenteHaciaJugador(3.2f, enEspasmo, Mathf.Sin(t * 3.7f) * 9f);
+        OrientarSutilmenteHaciaJugador(2.4f, enEspasmo, Mathf.Sin(t * 0.85f) * 2.2f);
     }
 
     private void AnimarTulpa(float t, bool enEspasmo)
@@ -150,19 +201,26 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
 
     private void AnimarCorpse(float t, bool enEspasmo)
     {
-        // Bolsa de cadáver en el suelo: respiración agonizante y espasmos repentinos dentro de la bolsa
-        float pulso = 1f + Mathf.Sin(t * 3.8f) * 0.03f + (enEspasmo ? 0.06f : 0f);
-        transform.localScale = new Vector3(escalaBaseLocal.x * pulso, escalaBaseLocal.y * pulso, escalaBaseLocal.z);
+        transform.localScale = escalaBaseLocal;
 
-        Vector3 sacudida = enEspasmo
-            ? new Vector3(Random.Range(-0.02f, 0.02f), Random.Range(0f, 0.02f), Random.Range(-0.02f, 0.02f))
-            : Vector3.zero;
-        transform.localPosition = posBaseLocal + sacudida;
-
-        Quaternion giroSuelo = enEspasmo
-            ? Quaternion.Euler(Random.Range(-3f, 3f), Random.Range(-5f, 5f), Random.Range(-4f, 4f))
-            : Quaternion.Euler(0f, Mathf.Sin(t * 2.0f) * 1.5f, 0f);
-        transform.localRotation = rotBaseLocal * giroSuelo;
+        if (modoCorpse == ModoCorpseContextual.Colgado)
+        {
+            // Cadáver colgado del techo: balanceo pendular lento e inquietante desde el anclaje superior de la cuerda
+            transform.localPosition = posBaseLocal;
+            float penduloX = Mathf.Sin(t * 1.05f) * 2.1f;
+            float penduloZ = Mathf.Cos(t * 0.88f) * 1.8f;
+            float torsionCuerdaY = Mathf.Sin(t * 0.42f) * 7.5f;
+            transform.localRotation = rotBaseLocal * Quaternion.Euler(penduloX, torsionCuerdaY, penduloZ);
+        }
+        else
+        {
+            // Cadáver acostado (en cama, suelo o bañera): inerte y realista, con rarísimo micro-espasmo post-mortem
+            transform.localPosition = posBaseLocal;
+            Quaternion microRigidez = enEspasmo
+                ? Quaternion.Euler(Random.Range(-0.8f, 0.8f), Random.Range(-1.0f, 1.0f), Random.Range(-0.8f, 0.8f))
+                : Quaternion.identity;
+            transform.localRotation = rotBaseLocal * microRigidez;
+        }
     }
 
     private void OrientarSutilmenteHaciaJugador(float velocidadGiro, bool enEspasmo, float ladeadoZ)

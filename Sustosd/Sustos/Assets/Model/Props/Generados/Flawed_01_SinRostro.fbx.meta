@@ -1,0 +1,306 @@
+fileFormatVersion: 2
+guid: c4d28ad49b146bf448165816289d4795
+ModelImporter:
+  serializedVersion: 24600
+  internalIDToNameTable: []
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL03_Blusa
+    second: {fileID: 2100000, guid: 70f002552e6dd474985592c9dca80230, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL03_Bolso
+    second: {fileID: 2100000, guid: af71fac26572c2e40806ec1debe1ec5f, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL03_Cabello
+    second: {fileID: 2100000, guid: 3ec1ec134f27ca0439362fff323672e2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL03_Pantalon
+    second: {fileID: 2100000, guid: 41afd59594eeddd4482c6feb70a18968, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL03_Piel
+    second: {fileID: 2100000, guid: bfd4dc6af8e625b47a64e2be7c60f394, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL03_PielBrazos
+    second: {fileID: 2100000, guid: bfd4dc6af8e625b47a64e2be7c60f394, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL03_Zapatos
+    second: {fileID: 2100000, guid: 4141ab3240f488e48a51c1b4e9757f77, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL04_Cabello
+    second: {fileID: 2100000, guid: 3ec1ec134f27ca0439362fff323672e2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL04_CamisaInt
+    second: {fileID: 2100000, guid: 76386651a6982bd4886c29dcf73f5294, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL04_Pantalon
+    second: {fileID: 2100000, guid: c4e7e3a525d0c9d448f68b53ce4c0749, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL04_Piel
+    second: {fileID: 2100000, guid: 347b1aa5d42e88249aadcdde3ceb6b3f, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL04_PielManos
+    second: {fileID: 2100000, guid: 347b1aa5d42e88249aadcdde3ceb6b3f, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL04_Saco
+    second: {fileID: 2100000, guid: b8661099d3fc60a41a795ea8c095404c, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL04_Zapatos
+    second: {fileID: 2100000, guid: d00d72cbce6fad34ea5728c99b489504, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL05_BlusaJaspeada
+    second: {fileID: 2100000, guid: fc7bbb54ff8f5f3439cbe0f14887a71d, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL05_Cabello
+    second: {fileID: 2100000, guid: 3ec1ec134f27ca0439362fff323672e2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL05_Jeans
+    second: {fileID: 2100000, guid: c8f4fa2b791f96d41b0ff887b6935649, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL05_Piel
+    second: {fileID: 2100000, guid: 0253a9f70a23d9f4e804a45008f1afd2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL05_PielManos
+    second: {fileID: 2100000, guid: 0253a9f70a23d9f4e804a45008f1afd2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL05_Zapatos
+    second: {fileID: 2100000, guid: d00d72cbce6fad34ea5728c99b489504, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL06_Abrigo
+    second: {fileID: 2100000, guid: 8c8570a6226ba0849b193c6a401a7de2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL06_Pantalon
+    second: {fileID: 2100000, guid: c4e7e3a525d0c9d448f68b53ce4c0749, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL06_PielManos
+    second: {fileID: 2100000, guid: 53ba030d445ae4346a2b9582b13a5891, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL06_PielVentana
+    second: {fileID: 2100000, guid: 53ba030d445ae4346a2b9582b13a5891, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL06_Zapatos
+    second: {fileID: 2100000, guid: d00d72cbce6fad34ea5728c99b489504, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Cabello
+    second: {fileID: 2100000, guid: 3ec1ec134f27ca0439362fff323672e2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Cabello.001
+    second: {fileID: 2100000, guid: 3ec1ec134f27ca0439362fff323672e2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Camisa_1
+    second: {fileID: 2100000, guid: a30409b65706e3742b5bfdcbac1b4a4b, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Camisa_2
+    second: {fileID: 2100000, guid: 5c55e225edf39904ea908529cb48ae66, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_NegroVacio
+    second: {fileID: 2100000, guid: f478f7d4ad5214d4487f39ee8777eb2e, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Pantalon
+    second: {fileID: 2100000, guid: c8f4fa2b791f96d41b0ff887b6935649, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Pantalon.001
+    second: {fileID: 2100000, guid: c8f4fa2b791f96d41b0ff887b6935649, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Piel_1
+    second: {fileID: 2100000, guid: 4ee7ffc092ba0ae4899794084442e2b3, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Piel_1.001
+    second: {fileID: 2100000, guid: 4ee7ffc092ba0ae4899794084442e2b3, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Piel_2
+    second: {fileID: 2100000, guid: 41e72db41a3b8a34da86b25b032970b2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Piel_2.001
+    second: {fileID: 2100000, guid: 41e72db41a3b8a34da86b25b032970b2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Zapatos
+    second: {fileID: 2100000, guid: d00d72cbce6fad34ea5728c99b489504, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: FL_Zapatos.001
+    second: {fileID: 2100000, guid: d00d72cbce6fad34ea5728c99b489504, type: 2}
+  materials:
+    materialImportMode: 2
+    materialName: 0
+    materialSearch: 1
+    materialLocation: 1
+    searchTexturesGlobally: 0
+  animations:
+    legacyGenerateAnimations: 4
+    bakeSimulation: 0
+    resampleCurves: 1
+    optimizeGameObjects: 0
+    removeConstantScaleCurves: 0
+    motionNodeName: 
+    animationImportErrors: 
+    animationImportWarnings: 
+    animationRetargetingWarnings: 
+    animationDoRetargetingWarnings: 0
+    importAnimatedCustomProperties: 0
+    importConstraints: 0
+    animationCompression: 1
+    animationRotationError: 0.5
+    animationPositionError: 0.5
+    animationScaleError: 0.5
+    animationWrapMode: 0
+    extraExposedTransformPaths: []
+    extraUserProperties: []
+    clipAnimations: []
+    isReadable: 0
+  meshes:
+    lODScreenPercentages: []
+    globalScale: 1
+    meshCompression: 0
+    addColliders: 0
+    useSRGBMaterialColor: 1
+    sortHierarchyByName: 1
+    preBakeConvexCollisionMesh: 0
+    preBakeTriangleCollisionMesh: 0
+    importPhysicalCameras: 1
+    importVisibility: 1
+    importBlendShapes: 1
+    importCameras: 1
+    importLights: 1
+    nodeNameCollisionStrategy: 1
+    fileIdsGeneration: 2
+    swapUVChannels: 0
+    generateSecondaryUV: 0
+    useFileUnits: 1
+    keepQuads: 0
+    weldVertices: 1
+    bakeAxisConversion: 0
+    preserveHierarchy: 0
+    skinWeightsMode: 0
+    maxBonesPerVertex: 4
+    minBoneWeight: 0.001
+    optimizeBones: 1
+    generateMeshLods: 0
+    meshLodGenerationFlags: 0
+    maximumMeshLod: -1
+    importUVs: -1
+    importVertexColors: 1
+    meshOptimizationFlags: -1
+    indexFormat: 0
+    secondaryUVAngleDistortion: 8
+    secondaryUVAreaDistortion: 15.000001
+    secondaryUVHardAngle: 88
+    secondaryUVMarginMethod: 1
+    secondaryUVMinLightmapResolution: 40
+    secondaryUVMinObjectScale: 1
+    secondaryUVPackMargin: 4
+    useFileScale: 1
+    strictVertexDataChecks: 0
+  tangentSpace:
+    normalSmoothAngle: 60
+    normalImportMode: 0
+    tangentImportMode: 3
+    normalCalculationMode: 4
+    legacyComputeAllNormalsFromSmoothingGroupsWhenMeshHasBlendShapes: 0
+    blendShapeNormalImportMode: 1
+    normalSmoothingSource: 0
+    calculateBlendshapeNormalsDeltaFromImportedNormals: 0
+  referencedClips: []
+  importAnimation: 1
+  humanDescription:
+    serializedVersion: 3
+    human: []
+    skeleton: []
+    armTwist: 0.5
+    foreArmTwist: 0.5
+    upperLegTwist: 0.5
+    legTwist: 0.5
+    armStretch: 0.05
+    legStretch: 0.05
+    feetSpacing: 0
+    globalScale: 1
+    rootMotionBoneName: 
+    hasTranslationDoF: 0
+    hasExtraRoot: 0
+    skeletonHasParents: 1
+  lastHumanDescriptionAvatarSource: {instanceID: 0}
+  autoGenerateAvatarMappingIfUnspecified: 1
+  animationType: 2
+  humanoidOversampling: 1
+  avatarSetup: 0
+  addHumanoidExtraRootOnlyWhenUsingAvatar: 1
+  importBlendShapeDeformPercent: 1
+  remapMaterialsIfMaterialImportModeIsNone: 0
+  additionalBone: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

@@ -174,19 +174,24 @@ public class FinalTurnoVR : MonoBehaviour
         // Capturar retrato VHS en blanco y negro de altísimo contraste de esta misma entidad
         Texture2D texturaRetratoVHS = CapturarRetratoVHSPosterizado(modeloScreamer, entidadAtacante);
 
-        // Luz puntual intensa sobre el rostro del screamer
+        // Luz puntual intensa sobre el rostro del screamer (desactivada en PureForm para que jamás tenga reflejos de piel y sea 100% sombra negra pura)
         GameObject objLuzScreamer = new GameObject("Luz_Screamer_VR");
         objLuzScreamer.layer = CapaScreamer;
         if (cam != null) objLuzScreamer.transform.SetParent(cam.transform, false);
         objLuzScreamer.transform.localPosition = new Vector3(0f, 0.05f, 0.28f);
         Light luzScreamer = objLuzScreamer.AddComponent<Light>();
         luzScreamer.type = LightType.Point;
-        luzScreamer.color = new Color(1f, 0.90f, 0.88f, 1f);
-        luzScreamer.intensity = 4.8f;
+        luzScreamer.color = entidadAtacante == TipoAnomalia.Preacher
+            ? new Color(0.88f, 0.90f, 0.96f, 1f)
+            : new Color(1f, 0.90f, 0.88f, 1f);
+        bool esEntidadUnlitOscura = entidadAtacante == TipoAnomalia.PureForm || entidadAtacante == TipoAnomalia.Preacher;
+        luzScreamer.intensity = esEntidadUnlitOscura ? 0f : (entidadAtacante == TipoAnomalia.Flawed ? 2.15f : 4.8f);
         luzScreamer.range = 2.6f;
         luzScreamer.shadows = LightShadows.None;
         luzScreamer.renderMode = LightRenderMode.ForcePixel;
         luzScreamer.cullingMask = (1 << CapaScreamer);
+        if (esEntidadUnlitOscura && cam != null)
+            cam.backgroundColor = new Color(0.045f, 0.048f, 0.058f, 1f);
 
         if (fuenteAudioFinal != null && sonidoScreamer != null)
         {
@@ -228,8 +233,20 @@ public class FinalTurnoVR : MonoBehaviour
                 modeloScreamer.transform.localRotation = rotBaseScreamer * sacudidaRot;
             }
 
-            if (luzScreamer != null)
-                luzScreamer.intensity = Random.Range(2.2f, 5.8f);
+            if (esEntidadUnlitOscura)
+            {
+                if (cam != null)
+                {
+                    float penumbra = Random.value < 0.28f ? Random.Range(0.09f, 0.14f) : Random.Range(0.038f, 0.065f);
+                    cam.backgroundColor = new Color(penumbra * 0.92f, penumbra * 0.95f, penumbra * 1.08f, 1f);
+                }
+            }
+            else if (luzScreamer != null)
+            {
+                luzScreamer.intensity = entidadAtacante == TipoAnomalia.Flawed
+                    ? Random.Range(1.35f, 2.55f)
+                    : Random.Range(2.2f, 5.8f);
+            }
 
             yield return null;
         }
@@ -482,9 +499,60 @@ public class FinalTurnoVR : MonoBehaviour
             AnimadorEntidadTerror anim = clon.GetComponent<AnimadorEntidadTerror>();
             if (anim != null) Destroy(anim);
 
+            if (tipo == TipoAnomalia.PureForm)
+                ObjetoAnomalia.AplicarMaterialesAbismalesPureForm(clon.transform);
+            else if (tipo == TipoAnomalia.Preacher)
+                ObjetoAnomalia.AplicarMaterialesTerrorPreacher(clon.transform);
+            else if (tipo == TipoAnomalia.Flawed)
+            {
+                if (clon.transform.childCount > 1)
+                {
+                    bool algunHijoActivo = false;
+                    for (int c = 0; c < clon.transform.childCount; c++)
+                    {
+                        if (clon.transform.GetChild(c).gameObject.activeSelf)
+                        {
+                            if (!algunHijoActivo) algunHijoActivo = true;
+                            else clon.transform.GetChild(c).gameObject.SetActive(false);
+                        }
+                    }
+                    if (!algunHijoActivo)
+                    {
+                        int idxRand = Random.Range(0, clon.transform.childCount);
+                        clon.transform.GetChild(idxRand).gameObject.SetActive(true);
+                    }
+                }
+                ObjetoAnomalia.AplicarMaterialesMateFlawed(clon.transform);
+            }
+
             AsignarCapaRecursiva(clon.transform, CapaScreamer);
 
-            Renderer[] rends = clon.GetComponentsInChildren<Renderer>(true);
+            // Si es Corpse acostado en suelo/cama, erguirlo frente al visor para encuadrar rostro y torso
+            if (tipo == TipoAnomalia.Corpse)
+            {
+                Transform grpAcostado = clon.transform.Find("Corpse_Acostado");
+                Transform grpColgado = clon.transform.Find("Corpse_Colgado");
+                Transform grpBanera = clon.transform.Find("Corpse_Banera");
+                bool algunoActivo = (grpAcostado != null && grpAcostado.gameObject.activeSelf) ||
+                                    (grpColgado != null && grpColgado.gameObject.activeSelf) ||
+                                    (grpBanera != null && grpBanera.gameObject.activeSelf);
+                if (!algunoActivo && grpAcostado != null)
+                    grpAcostado.gameObject.SetActive(true);
+
+                if (grpBanera != null && grpBanera.gameObject.activeSelf)
+                {
+                    Transform tinaMesh = grpBanera.Find("Tina_Con_Cuerpo/Bathtub");
+                    if (tinaMesh != null) tinaMesh.gameObject.SetActive(false);
+                }
+                else if (grpAcostado != null && grpAcostado.gameObject.activeSelf)
+                {
+                    clon.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
+                }
+            }
+
+            Renderer[] rends = clon.GetComponentsInChildren<Renderer>(false);
+            if (rends.Length == 0)
+                rends = clon.GetComponentsInChildren<Renderer>(true);
             if (rends.Length > 0)
             {
                 Bounds b = rends[0].bounds;
@@ -546,7 +614,8 @@ public class FinalTurnoVR : MonoBehaviour
 
             Camera camSnap = camObj.AddComponent<Camera>();
             camSnap.clearFlags = CameraClearFlags.SolidColor;
-            camSnap.backgroundColor = Color.black;
+            // PureForm es silueta negra pura con ojos blancos: usar fondo gris tenue VHS para recortar su silueta y resaltar sus ojos blancos
+            camSnap.backgroundColor = (tipo == TipoAnomalia.PureForm) ? new Color(0.24f, 0.24f, 0.26f, 1f) : Color.black;
             camSnap.cullingMask = (1 << CapaScreamer);
             camSnap.fieldOfView = 44f;
             camSnap.nearClipPlane = 0.1f;
@@ -601,7 +670,7 @@ public class FinalTurnoVR : MonoBehaviour
                 }
             }
 
-            if (pixelesBrillantes > (w * h) / 30)
+            if (pixelesBrillantes > (w * h) / 60)
             {
                 tex.SetPixels(pixels);
                 tex.Apply();
