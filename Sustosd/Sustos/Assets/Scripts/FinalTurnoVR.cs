@@ -41,6 +41,7 @@ public class FinalTurnoVR : MonoBehaviour
     private TrackedDeviceGraphicRaycaster raycasterXRCanvas;
 
     private RawImage imgRetratoVHS;
+    private RawImage imgResplandorCrimsonDerecha;
     private RawImage imgScanlinesVHS;
     private Text txtMonologoDeathScreen;
     private Text txtMonologoCanalAzul;
@@ -53,6 +54,11 @@ public class FinalTurnoVR : MonoBehaviour
 
     private GameObject panelBotonesDerrota;
     private GameObject panelVictoria;
+    private CanvasGroup canvasGroupVictoria;
+    private GameObject grupoIntroReloj6AM;
+    private Text txtRelojGigante6AM;
+    private Text txtSubtituloTurnoCompletado;
+    private Font fuenteSerifReloj6AM;
     private string textoMonologoBase = "";
 
     private readonly List<Texture2D> texturasTemporalesVHS = new List<Texture2D>();
@@ -111,7 +117,7 @@ public class FinalTurnoVR : MonoBehaviour
                 else if (Keyboard.current.mKey.wasPressedThisFrame)
                     IrAlMenuPrincipal();
             }
-            else if (panelVictoria != null && panelVictoria.activeInHierarchy)
+            else if (panelVictoria != null && panelVictoria.activeInHierarchy && (canvasGroupVictoria == null || canvasGroupVictoria.interactable))
             {
                 if (Keyboard.current.mKey.wasPressedThisFrame || Keyboard.current.enterKey.wasPressedThisFrame)
                     IrAlMenuPrincipal();
@@ -222,8 +228,10 @@ public class FinalTurnoVR : MonoBehaviour
             fuenteAudioFinal.Play();
         }
 
-        // Sacudida violenta frente al visor (0.00 s -> 1.12 s)
-        float duracionScreamer = 1.12f;
+        // Sacudida violenta frente al visor sincronizada al milisegundo con la duración real del screamer extraído (~1.02s) antes del corte VHS
+        float duracionScreamer = (sonidoScreamer != null && sonidoScreamer.length > 0.35f)
+            ? sonidoScreamer.length
+            : 1.03f;
         float tScreamer = 0f;
         Vector3 posBaseScreamer = modeloScreamer != null ? modeloScreamer.transform.localPosition : new Vector3(0f, -0.5f, 0.66f);
         Quaternion rotBaseScreamer = modeloScreamer != null ? modeloScreamer.transform.localRotation : Quaternion.Euler(0f, 180f, 0f);
@@ -301,29 +309,50 @@ public class FinalTurnoVR : MonoBehaviour
         }
 
         Vector2 posBaseRetrato = new Vector2(228f, 12f);
-        Vector2 posTextoMacro = new Vector2(85f, -38f);
-        Vector2 posTextoNormal = new Vector2(-202f, 8f);
         RectTransform rectRetrato = imgRetratoVHS != null ? imgRetratoVHS.rectTransform : null;
 
-        // Tiempos exactos 1:1 con el video de referencia (~5.94 s total de alarma):
-        // [0.00 - 0.94s]: Solo el rostro B&W desgarrado a la derecha sobre negro absoluto.
-        // [0.94 - 2.18s]: Corte macro agresivo del texto gigante superpuesto al rostro con estática fuerte.
-        // [2.18 - 4.28s]: Corte al plano completo en 2 columnas (monólogo con aberración RGB azul/roja + rostro).
-        // [4.28 - fin]:   El rostro se apaga (con destellos subliminales de 1 frame) y queda el monólogo vibrando.
-        float corteMacro = duracionTotalAlarma * 0.158f;
-        float corteDosColumnas = duracionTotalAlarma * 0.367f;
+        // Estados erráticos de tamaño y encuadre antes del flatline para que el texto cambie de escala constantemente
+        Vector2[] escalasErraticas = new Vector2[]
+        {
+            new Vector2(0.96f, 1.30f),
+            new Vector2(2.35f, 2.75f),
+            new Vector2(1.42f, 2.08f),
+            new Vector2(2.90f, 1.82f),
+            new Vector2(1.10f, 2.55f),
+            new Vector2(1.72f, 0.94f),
+            new Vector2(3.15f, 3.35f),
+            new Vector2(0.86f, 1.68f)
+        };
+        Vector2[] posicionesErraticas = new Vector2[]
+        {
+            new Vector2(-202f,   8f),
+            new Vector2(  82f, -36f),
+            new Vector2(-145f, -14f),
+            new Vector2( -45f,  48f),
+            new Vector2(-180f, -28f),
+            new Vector2(-160f,  20f),
+            new Vector2( 115f, -55f),
+            new Vector2(-212f,  15f)
+        };
+
+        float corteEntradaTexto = duracionTotalAlarma * 0.145f;
         float corteSoloTexto = duracionTotalAlarma * 0.720f;
 
         ActivarCapasTextoMonologo(false);
+        if (imgResplandorCrimsonDerecha != null)
+            imgResplandorCrimsonDerecha.gameObject.SetActive(false);
 
         float tAlarma = 0f;
         float timerCambioFrameRetrato = 0f;
+        float timerCambioTamanoErratico = 0f;
+        int idxEstadoErratico = 1;
 
         while (tAlarma < duracionTotalAlarma)
         {
             float dt = Time.unscaledDeltaTime;
             tAlarma += dt;
             timerCambioFrameRetrato -= dt;
+            timerCambioTamanoErratico -= dt;
 
             // Alternar entre los 4 frames desgarrados del retrato para que la cara se deforme como cinta dañada
             if (timerCambioFrameRetrato <= 0f && imgRetratoVHS != null && framesRetratoVHS != null && framesRetratoVHS.Length > 0)
@@ -332,74 +361,61 @@ public class FinalTurnoVR : MonoBehaviour
                 timerCambioFrameRetrato = Random.Range(0.035f, 0.085f);
             }
 
-            // Pulso rítmico sincronizado con los golpes ásperos de la alarma VHS (~7.5 Hz + picos aleatorios)
+            // Cambiar constantemente el tamaño/encuadre del texto cada 0.05s - 0.14s antes del flatline
+            if (timerCambioTamanoErratico <= 0f)
+            {
+                int nuevoIdx = Random.Range(0, escalasErraticas.Length);
+                if (nuevoIdx == idxEstadoErratico)
+                    nuevoIdx = (nuevoIdx + 1) % escalasErraticas.Length;
+                idxEstadoErratico = nuevoIdx;
+                timerCambioTamanoErratico = Random.Range(0.05f, 0.14f);
+            }
+
             float pulsoAlarma = Mathf.Abs(Mathf.Sin(tAlarma * Mathf.PI * 7.6f));
-            bool picoGlitch = pulsoAlarma > 0.86f || Random.value < 0.14f;
+            bool picoGlitch = pulsoAlarma > 0.84f || Random.value < 0.22f;
 
             if (TabletSistemaVR.Instancia != null && picoGlitch && Random.value < 0.35f)
                 TabletSistemaVR.Instancia.EnviarHapticAmbosMandos(0.28f, 0.05f);
 
-            if (tAlarma < corteMacro)
+            if (tAlarma < corteEntradaTexto)
             {
-                // BEAT 1: Solo rostro desgarrado en la oscuridad
+                // Solo rostro desgarrado en la oscuridad al arrancar la alarma
                 ActivarCapasTextoMonologo(false);
                 if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(true);
-                AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, picoGlitch, 1.0f, 0.38f);
-            }
-            else if (tAlarma < corteDosColumnas)
-            {
-                // BEAT 2: Corte macro agresivo (texto gigante superpuesto sobre el rostro como en el segundo 00:02)
-                ActivarCapasTextoMonologo(true);
-                if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(true);
-                AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato + new Vector2(18f, 6f), true, 0.92f, 0.50f);
-
-                AplicarTransformYCromaticaTexto(
-                    posTextoMacro,
-                    new Vector2(2.22f, 2.58f),
-                    picoGlitch,
-                    amplitudX: 18f,
-                    amplitudY: 7f,
-                    splitRGB: 4.8f,
-                    corromperCaracteres: true);
-            }
-            else if (tAlarma < corteSoloTexto)
-            {
-                // BEAT 3: Plano completo de 2 columnas (monólogo condensado a la izquierda + rostro a la derecha)
-                ActivarCapasTextoMonologo(true);
-                if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(true);
-                AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, picoGlitch, 0.96f, 0.34f);
-
-                AplicarTransformYCromaticaTexto(
-                    posTextoNormal,
-                    new Vector2(0.98f, 1.32f),
-                    picoGlitch,
-                    amplitudX: 12f,
-                    amplitudY: 2.5f,
-                    splitRGB: 3.4f,
-                    corromperCaracteres: true);
+                AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, picoGlitch, Color.white, 0.40f);
             }
             else
             {
-                // BEAT 4: El retrato desaparece en la negrura (con breves flashes subliminales) y queda el monólogo
                 ActivarCapasTextoMonologo(true);
-                bool flashSubliminal = picoGlitch && Random.value < 0.10f;
-                if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(flashSubliminal);
-                AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato, picoGlitch, flashSubliminal ? 0.55f : 0f, 0.42f);
-
-                AplicarTransformYCromaticaTexto(
-                    posTextoNormal,
-                    new Vector2(0.98f, 1.32f),
+                bool mostrarRetrato = tAlarma < corteSoloTexto || (picoGlitch && Random.value < 0.12f);
+                if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(mostrarRetrato);
+                AplicarGlitchContinuoVHS(
+                    rectRetrato,
+                    posBaseRetrato + (idxEstadoErratico == 1 ? new Vector2(18f, 6f) : Vector2.zero),
                     picoGlitch,
-                    amplitudX: 15f,
-                    amplitudY: 3.0f,
-                    splitRGB: 3.8f,
+                    mostrarRetrato ? new Color(0.95f, 0.95f, 0.95f, 1f) : Color.clear,
+                    0.44f);
+
+                // Fluctuación continua y agresiva de escala en X e Y además de los saltos de estado errático
+                Vector2 escBase = escalasErraticas[idxEstadoErratico];
+                Vector2 escViva = new Vector2(
+                    escBase.x * Random.Range(0.90f, 1.14f),
+                    escBase.y * Random.Range(0.86f, 1.20f)
+                );
+                AplicarTransformYCromaticaTexto(
+                    posicionesErraticas[idxEstadoErratico],
+                    escViva,
+                    true,
+                    amplitudX: 22f,
+                    amplitudY: 9f,
+                    splitRGB: Random.Range(3.4f, 6.2f),
                     corromperCaracteres: true);
             }
 
             yield return null;
         }
 
-        // 3. CORTE EN SECO A PITIDO FLATLINE + TEXTO ESTIRADO EXTREMO CON SANGRADO CROMÁTICO AZUL/ROJO
+        // 3. CORTE EN SECO A PITIDO FLATLINE + TEXTO ESTIRADO + LADO DE LA ENTIDAD EN TONO ROJIZO CARMESÍ (CRIMSON)
         float duracionFlatline = (sonidoFlatline != null && sonidoFlatline.length > 0.8f)
             ? sonidoFlatline.length
             : 2.48f;
@@ -418,6 +434,8 @@ public class FinalTurnoVR : MonoBehaviour
         }
 
         SincronizarContenidoTextoMonologo(textoMonologoBase);
+        if (imgResplandorCrimsonDerecha != null)
+            imgResplandorCrimsonDerecha.gameObject.SetActive(true);
         if (imgRetratoVHS != null)
         {
             imgRetratoVHS.gameObject.SetActive(true);
@@ -433,12 +451,19 @@ public class FinalTurnoVR : MonoBehaviour
         {
             tFlatline += Time.unscaledDeltaTime;
 
-            // En el segundo ~1.00 del flatline real hay un pequeño salto analógico de cinta (como en el video original)
             bool segundaMitadFlatline = tFlatline >= (duracionFlatline * 0.42f);
             Vector2 posFlatline = segundaMitadFlatline ? new Vector2(-18f, 48f) : new Vector2(42f, -64f);
 
-            // Impresión fantasma ultra tenue (7%) del rostro al fondo derecho durante el flatline
-            AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato + new Vector2(10f, -8f), false, 0.075f, 0.18f);
+            // Tono rojizo carmesí (Crimson) intenso y sombrío del lado derecho de la entidad durante el flatline
+            float pulsoCrimson = 0.46f + Mathf.Sin(tFlatline * 14f) * 0.05f;
+            Color tinteCrimsonEntidad = new Color(0.84f, 0.07f, 0.14f, pulsoCrimson);
+            AplicarGlitchContinuoVHS(rectRetrato, posBaseRetrato + new Vector2(10f, -8f), false, tinteCrimsonEntidad, 0.20f);
+
+            if (imgResplandorCrimsonDerecha != null)
+            {
+                float alfaHaloCrimson = 0.36f + Mathf.Sin(tFlatline * 9f) * 0.04f;
+                imgResplandorCrimsonDerecha.color = new Color(0.68f, 0.04f, 0.10f, alfaHaloCrimson);
+            }
 
             if (rectMonologoDeathScreen != null)
             {
@@ -476,6 +501,7 @@ public class FinalTurnoVR : MonoBehaviour
             fuenteAudioFinal.Stop();
 
         ActivarCapasTextoMonologo(false);
+        if (imgResplandorCrimsonDerecha != null) imgResplandorCrimsonDerecha.gameObject.SetActive(false);
         if (imgRetratoVHS != null) imgRetratoVHS.gameObject.SetActive(false);
         if (imgScanlinesVHS != null) imgScanlinesVHS.gameObject.SetActive(false);
         if (barraTrackingVHS != null) barraTrackingVHS.gameObject.SetActive(false);
@@ -550,7 +576,7 @@ public class FinalTurnoVR : MonoBehaviour
         }
     }
 
-    private void AplicarGlitchContinuoVHS(RectTransform rectRetrato, Vector2 posBaseRetrato, bool intenso, float brilloBase, float intensidadScanlines)
+    private void AplicarGlitchContinuoVHS(RectTransform rectRetrato, Vector2 posBaseRetrato, bool intenso, Color colorBaseRetrato, float intensidadScanlines)
     {
         if (rectRetrato != null)
         {
@@ -564,9 +590,13 @@ public class FinalTurnoVR : MonoBehaviour
 
         if (imgRetratoVHS != null)
         {
-            float flicker = (intenso && Random.value < 0.30f) ? brilloBase * Random.Range(0.60f, 1.18f) : brilloBase;
-            flicker = Mathf.Clamp01(flicker);
-            imgRetratoVHS.color = new Color(flicker, flicker, flicker, 1f);
+            float flicker = (intenso && Random.value < 0.30f) ? Random.Range(0.62f, 1.15f) : 1.0f;
+            imgRetratoVHS.color = new Color(
+                Mathf.Clamp01(colorBaseRetrato.r * flicker),
+                Mathf.Clamp01(colorBaseRetrato.g * flicker),
+                Mathf.Clamp01(colorBaseRetrato.b * flicker),
+                colorBaseRetrato.a
+            );
         }
 
         if (imgScanlinesVHS != null)
@@ -602,12 +632,23 @@ public class FinalTurnoVR : MonoBehaviour
     }
 
     // =========================================================================
-    // PANTALLA DE VICTORIA A LAS 06:00 AM (CENTRADA, DERECHA Y SIN OBSTÁCULOS)
+    // PANTALLA DE VICTORIA A LAS 06:00 AM (CUENTA REGRESIVA 5:58 -> 6:00:00AM + SONIDOS ORIGINALES + FADE AL MENÚ, SIN CONFETI)
     // =========================================================================
+    private Font ObtenerFuenteSerifReloj6AM()
+    {
+        if (fuenteSerifReloj6AM == null)
+        {
+            fuenteSerifReloj6AM = Font.CreateDynamicFontFromOSFont(
+                new string[] { "Times New Roman", "Georgia", "Palatino Linotype", "Garamond", "Serif" }, 96);
+        }
+        return fuenteSerifReloj6AM != null ? fuenteSerifReloj6AM : ObtenerFuenteTerror();
+    }
+
     private IEnumerator RutinaPantallaVictoria(int anomaliasContenidas, int reportesFallidos)
     {
         Camera cam = Camera.main != null ? Camera.main : FindAnyObjectByType<Camera>();
         SilenciarAudiosDeLaCasa();
+        DeshabilitarRayosUIDuranteCinematica();
 
         if (TabletSistemaVR.Instancia != null)
             TabletSistemaVR.Instancia.gameObject.SetActive(false);
@@ -621,23 +662,147 @@ public class FinalTurnoVR : MonoBehaviour
             cam.cullingMask = (1 << CapaUI);
         }
 
+        // Crear el Canvas sin activar el puntero VR durante la cinemática del reloj 6:00 AM
+        ConstruirCanvasCentradoEnCamara(cam, habilitarInteraccionInmediata: false);
+        ConstruirIntroReloj6AM();
+        ConstruirLayoutVictoria6AM(anomaliasContenidas, reportesFallidos);
+
+        if (panelVictoria != null)
+            panelVictoria.SetActive(false);
+
+        bool tieneAudioCompleto = sonidoVictoria6AM != null && sonidoVictoria6AM.length > 6.0f;
         if (fuenteAudioFinal != null && sonidoVictoria6AM != null)
         {
             fuenteAudioFinal.Stop();
             fuenteAudioFinal.clip = sonidoVictoria6AM;
-            fuenteAudioFinal.volume = 0.85f;
+            fuenteAudioFinal.volume = 0.92f;
+            fuenteAudioFinal.pitch = 1.0f;
             fuenteAudioFinal.loop = false;
             fuenteAudioFinal.Play();
         }
 
+        Color grisReloj = new Color(0.82f, 0.82f, 0.82f, 1f);
+
+        // 1. FASE RELOJ (0.00 s -> 1.52 s): 5:58:06AM avanzando velozmente hasta 5:59:59AM sincronizado con los ticks del clip
+        const float tiempoGolpeCampana = 1.52f;
+        float t = 0f;
+        while (t < tiempoGolpeCampana)
+        {
+            t += Time.unscaledDeltaTime;
+            float p = Mathf.Clamp01(t / tiempoGolpeCampana);
+            int totalSeg = Mathf.Clamp(Mathf.FloorToInt(Mathf.Lerp(6f, 119.99f, p)), 6, 119);
+            int min = 58 + (totalSeg / 60);
+            int seg = totalSeg % 60;
+            if (txtRelojGigante6AM != null)
+            {
+                txtRelojGigante6AM.text = $"5:{min:00}:{seg:00}AM";
+                txtRelojGigante6AM.color = grisReloj;
+            }
+            yield return null;
+        }
+
+        // 2. GOLPE EXACTO DE LAS 6:00:00AM (1.52 s): suena la campana principal en sfx_victoria_6am.wav
+        if (txtRelojGigante6AM != null)
+            txtRelojGigante6AM.text = "6:00:00AM";
+
         if (TabletSistemaVR.Instancia != null)
-            TabletSistemaVR.Instancia.EnviarHapticAmbosMandos(0.55f, 0.22f);
+            TabletSistemaVR.Instancia.EnviarHapticAmbosMandos(0.55f, 0.24f);
 
-        ConstruirCanvasCentradoEnCamara(cam, habilitarInteraccionInmediata: true);
-        ConstruirLayoutVictoria6AM(anomaliasContenidas, reportesFallidos);
+        // 3. APARICIÓN DE "TURNO COMPLETADO" DEBAJO DE LA HORA Y REPRODUCCIÓN DE TODOS LOS SONIDOS (SIN CONFETI)
+        float duracionCelebracion = tieneAudioCompleto ? 7.45f : 3.20f;
+        float tCeleb = 0f;
+        while (tCeleb < duracionCelebracion)
+        {
+            tCeleb += Time.unscaledDeltaTime;
+            // Entre +0.95 s y +2.80 s tras dar las 6:00 AM aparece suavemente el subtítulo debajo del reloj
+            float alfaSub = Mathf.SmoothStep(0f, 0.90f, Mathf.Clamp01((tCeleb - 0.95f) / 1.85f));
+            if (txtSubtituloTurnoCompletado != null)
+                txtSubtituloTurnoCompletado.color = new Color(grisReloj.r, grisReloj.g, grisReloj.b, alfaSub);
+
+            yield return null;
+        }
+
+        // 4. DESVANECIMIENTO SUAVE DEL RELOJ 6:00:00AM A NEGRO
+        const float duracionFadeOutReloj = 1.65f;
+        float tOut = 0f;
+        while (tOut < duracionFadeOutReloj)
+        {
+            tOut += Time.unscaledDeltaTime;
+            float k = 1f - Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(tOut / duracionFadeOutReloj));
+            if (txtRelojGigante6AM != null)
+                txtRelojGigante6AM.color = new Color(grisReloj.r * k, grisReloj.g * k, grisReloj.b * k, k);
+            if (txtSubtituloTurnoCompletado != null)
+                txtSubtituloTurnoCompletado.color = new Color(grisReloj.r * k, grisReloj.g * k, grisReloj.b * k, 0.90f * k);
+            yield return null;
+        }
+
+        if (grupoIntroReloj6AM != null)
+            grupoIntroReloj6AM.SetActive(false);
+
+        yield return new WaitForSecondsRealtime(0.25f);
+
+        // 5. APARICIÓN POCO A POCO DEL MENÚ DE VICTORIA QUE YA TENEMOS Y HABILITACIÓN DE CONTROLES VR
+        if (panelVictoria != null)
+            panelVictoria.SetActive(true);
+
+        if (canvasGroupVictoria != null)
+        {
+            canvasGroupVictoria.alpha = 0f;
+            canvasGroupVictoria.interactable = false;
+            canvasGroupVictoria.blocksRaycasts = false;
+
+            const float duracionFadeInMenu = 1.85f;
+            float tMenu = 0f;
+            while (tMenu < duracionFadeInMenu)
+            {
+                tMenu += Time.unscaledDeltaTime;
+                canvasGroupVictoria.alpha = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(tMenu / duracionFadeInMenu));
+                yield return null;
+            }
+
+            canvasGroupVictoria.alpha = 1f;
+            canvasGroupVictoria.interactable = true;
+            canvasGroupVictoria.blocksRaycasts = true;
+        }
+
         HabilitarRayosUIMandos();
+    }
 
-        yield break;
+    private void ConstruirIntroReloj6AM()
+    {
+        Font fontSerif = ObtenerFuenteSerifReloj6AM();
+        Color grisReloj = new Color(0.82f, 0.82f, 0.82f, 1f);
+
+        grupoIntroReloj6AM = new GameObject("Intro_Reloj_6AM_VR", typeof(RectTransform));
+        grupoIntroReloj6AM.layer = CapaUI;
+        grupoIntroReloj6AM.transform.SetParent(canvasFinal.transform, false);
+        RectTransform rtGrupo = grupoIntroReloj6AM.GetComponent<RectTransform>();
+        rtGrupo.sizeDelta = new Vector2(920f, 420f);
+        rtGrupo.anchoredPosition = Vector2.zero;
+
+        txtRelojGigante6AM = CrearTextoUI(
+            grupoIntroReloj6AM.transform,
+            "Txt_Reloj_6AM_Principal",
+            "5:58:06AM",
+            new Vector2(0f, 20f),
+            new Vector2(900f, 170f),
+            112,
+            TextAnchor.MiddleCenter,
+            grisReloj,
+            FontStyle.Normal,
+            fontSerif);
+
+        txtSubtituloTurnoCompletado = CrearTextoUI(
+            grupoIntroReloj6AM.transform,
+            "Txt_Subtitulo_TurnoCompletado",
+            "TURNO COMPLETADO",
+            new Vector2(0f, -68f),
+            new Vector2(760f, 64f),
+            30,
+            TextAnchor.MiddleCenter,
+            new Color(grisReloj.r, grisReloj.g, grisReloj.b, 0f),
+            FontStyle.Normal,
+            fontSerif);
     }
 
     // =========================================================================
@@ -794,9 +959,9 @@ public class FinalTurnoVR : MonoBehaviour
                 if (shLit != null)
                 {
                     matEsculturaTemporal = new Material(shLit) { name = "Temp_VHS_Sculpt" };
-                    matEsculturaTemporal.SetColor("_BaseColor", new Color(0.46f, 0.46f, 0.49f, 1f));
-                    matEsculturaTemporal.color = new Color(0.46f, 0.46f, 0.49f, 1f);
-                    matEsculturaTemporal.SetFloat("_Smoothness", 0.52f);
+                    matEsculturaTemporal.SetColor("_BaseColor", new Color(0.30f, 0.30f, 0.33f, 1f));
+                    matEsculturaTemporal.color = new Color(0.30f, 0.30f, 0.33f, 1f);
+                    matEsculturaTemporal.SetFloat("_Smoothness", 0.38f);
 
                     foreach (Renderer r in modeloScreamer.GetComponentsInChildren<Renderer>(false))
                     {
@@ -848,21 +1013,21 @@ public class FinalTurnoVR : MonoBehaviour
 
             // Luz principal rasante lateral-superior + contraluz tenue para recortar facciones sobre fondo #000000
             GameObject luzKeyObj = new GameObject("Luz_Key_Snapshot_VHS");
-            luzKeyObj.transform.position = focoRostro + haciaCamara * 0.34f + derechaCam * 0.24f + arribaCam * 0.16f;
+            luzKeyObj.transform.position = focoRostro + haciaCamara * 0.24f + derechaCam * 0.34f + arribaCam * 0.18f;
             Light lKey = luzKeyObj.AddComponent<Light>();
             lKey.type = LightType.Point;
             lKey.color = Color.white;
-            lKey.intensity = (tipo == TipoAnomalia.PureForm) ? 7.5f : 5.6f;
+            lKey.intensity = (tipo == TipoAnomalia.PureForm) ? 3.2f : 5.2f;
             lKey.range = 2.4f;
             lKey.renderMode = LightRenderMode.ForcePixel;
             lKey.cullingMask = (1 << CapaScreamer);
 
             GameObject luzRimObj = new GameObject("Luz_Rim_Snapshot_VHS");
-            luzRimObj.transform.position = focoRostro + haciaCamara * 0.10f - derechaCam * 0.28f + arribaCam * 0.18f;
+            luzRimObj.transform.position = focoRostro + haciaCamara * 0.06f - derechaCam * 0.32f + arribaCam * 0.16f;
             Light lRim = luzRimObj.AddComponent<Light>();
             lRim.type = LightType.Point;
             lRim.color = Color.white;
-            lRim.intensity = 2.4f;
+            lRim.intensity = (tipo == TipoAnomalia.PureForm) ? 1.15f : 2.2f;
             lRim.range = 2.0f;
             lRim.renderMode = LightRenderMode.ForcePixel;
             lRim.cullingMask = (1 << CapaScreamer);
@@ -1132,9 +1297,18 @@ public class FinalTurnoVR : MonoBehaviour
         if (cam != null)
         {
             canvasObj.transform.SetParent(cam.transform, false);
-            canvasObj.transform.localPosition = new Vector3(0f, 0f, 1.05f);
+            const float distZ = 1.05f;
+            canvasObj.transform.localPosition = new Vector3(0f, 0f, distZ);
             canvasObj.transform.localRotation = Quaternion.identity;
-            canvasObj.transform.localScale = Vector3.one * 0.00125f;
+
+            // Ajustar escala dinámicamente al FOV y aspecto de la cámara (PC Simulator o Meta Quest 2) para que NUNCA se recorte el título ni los bordes
+            float fovVertRad = Mathf.Clamp(cam.fieldOfView, 32f, 105f) * Mathf.Deg2Rad;
+            float altoFrustum = 2f * distZ * Mathf.Tan(fovVertRad * 0.5f);
+            float anchoFrustum = altoFrustum * Mathf.Max(1.1f, cam.aspect);
+            float escMaxY = (altoFrustum * 0.88f) / 560f;
+            float escMaxX = (anchoFrustum * 0.90f) / 960f;
+            float escOptima = Mathf.Min(0.00125f, Mathf.Min(escMaxX, escMaxY));
+            canvasObj.transform.localScale = Vector3.one * escOptima;
 
             // Añadir RectMask2D al marco 16:9 del monitor VHS para recortar limpiamente los saltos macro y el estiramiento flatline
             canvasObj.AddComponent<RectMask2D>();
@@ -1143,10 +1317,54 @@ public class FinalTurnoVR : MonoBehaviour
         CrearImagenUI(canvasFinal.transform, "Bg_Negro_Puro", new Vector2(1800f, 1100f), Vector2.zero, Color.black).raycastTarget = false;
     }
 
+    private Texture2D GenerarTexturaResplandorCrimson()
+    {
+        int w = 128;
+        int h = 128;
+        Texture2D tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+        {
+            name = "Tex_Resplandor_Crimson_VHS",
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp
+        };
+
+        Color[] cols = new Color[w * h];
+        for (int y = 0; y < h; y++)
+        {
+            float ny = (y / (float)(h - 1)) * 2f - 1f;
+            float scan = (y % 2 == 0) ? 0.86f : 1.0f;
+            for (int x = 0; x < w; x++)
+            {
+                float nx = (x / (float)(w - 1)) * 2f - 1f;
+                float d = Mathf.Sqrt(nx * nx * 0.85f + ny * ny * 0.72f);
+                float a = Mathf.Pow(Mathf.Clamp01(1f - d), 1.85f) * scan;
+                cols[y * w + x] = new Color(1f, 1f, 1f, a);
+            }
+        }
+
+        tex.SetPixels(cols);
+        tex.Apply();
+        texturasTemporalesVHS.Add(tex);
+        return tex;
+    }
+
     private void ConstruirLayoutDeathScreenVHS(Texture2D texRetrato, TipoAnomalia entidad, string motivo)
     {
         string nombreEntidad = TabletSistemaVR.ObtenerNombreTipoEspanol(entidad);
         Font fontTerror = ObtenerFuenteTerror();
+
+        // 0. Resplandor carmesí (Crimson) del lado derecho de la entidad para el clímax del flatline
+        GameObject objCrimson = new GameObject("Resplandor_Crimson_Entidad_VHS", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
+        objCrimson.layer = CapaUI;
+        objCrimson.transform.SetParent(canvasFinal.transform, false);
+        RectTransform rtCrim = objCrimson.GetComponent<RectTransform>();
+        rtCrim.sizeDelta = new Vector2(540f, 560f);
+        rtCrim.anchoredPosition = new Vector2(235f, 0f);
+        imgResplandorCrimsonDerecha = objCrimson.GetComponent<RawImage>();
+        imgResplandorCrimsonDerecha.texture = GenerarTexturaResplandorCrimson();
+        imgResplandorCrimsonDerecha.color = new Color(0.68f, 0.04f, 0.10f, 0.36f);
+        imgResplandorCrimsonDerecha.raycastTarget = false;
+        objCrimson.SetActive(false);
 
         // 1. Retrato close-up VHS en blanco y negro a la derecha sobre negro absoluto (#000000)
         GameObject objRaw = new GameObject("Retrato_Anomalia_VHS", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
@@ -1279,9 +1497,13 @@ public class FinalTurnoVR : MonoBehaviour
     {
         Font fontTerror = ObtenerFuenteTerror();
 
-        panelVictoria = new GameObject("Panel_Victoria_6AM", typeof(RectTransform));
+        panelVictoria = new GameObject("Panel_Victoria_6AM", typeof(RectTransform), typeof(CanvasGroup));
         panelVictoria.layer = CapaUI;
         panelVictoria.transform.SetParent(canvasFinal.transform, false);
+        canvasGroupVictoria = panelVictoria.GetComponent<CanvasGroup>();
+        canvasGroupVictoria.alpha = 0f;
+        canvasGroupVictoria.interactable = false;
+        canvasGroupVictoria.blocksRaycasts = false;
         RectTransform rt = panelVictoria.GetComponent<RectTransform>();
         rt.sizeDelta = new Vector2(780f, 460f);
         rt.anchoredPosition = Vector2.zero;

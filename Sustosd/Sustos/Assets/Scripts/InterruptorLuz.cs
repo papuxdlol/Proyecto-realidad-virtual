@@ -44,6 +44,7 @@ public class InterruptorLuz : MonoBehaviour
     public Light luzDelCuarto;
     public List<Light> lucesExtraDelCuarto = new List<Light>();
     public AudioSource sonidoClick;
+    public AudioClip clipSwitchReal;
 
     [Header("Respuesta y Delay")]
     public float delayConmutacion = 0.12f;
@@ -56,7 +57,8 @@ public class InterruptorLuz : MonoBehaviour
 
     private XRSimpleInteractable interactable;
     private BoxCollider hitboxPositivo;
-    private Quaternion rotInicialSwitch;
+    private Vector3 normalFrenteMundial = Vector3.forward;
+    private float temporizadorChequeoPared = 0f;
     private Coroutine rutinaDelayLuz;
     private int ultimaInteraccionFrame = -1;
     private float ultimoTiempoInteraccion = -10f;
@@ -64,6 +66,7 @@ public class InterruptorLuz : MonoBehaviour
     private float intensidadBaseLuz = IntensidadPiso1;
 
     private static AudioClip clipClickProcedural;
+    private static AudioClip clipClickRealCache;
     private static int ultimoFrameAsignacionGlobal = -1;
     private static readonly Dictionary<Light, Renderer> mapaLuzABulbo3D = new Dictionary<Light, Renderer>();
     private static MaterialPropertyBlock bloquePropiedadBulbo;
@@ -83,11 +86,13 @@ public class InterruptorLuz : MonoBehaviour
             return;
         }
 
-        rotInicialSwitch = transform.localRotation;
-
         Transform luzVieja = transform.Find("Luz_Real_Cuarto");
         if (luzVieja != null)
             Destroy(luzVieja.gameObject);
+
+        Transform rockerViejo = transform.Find("Palanca_Rocker_VR");
+        if (rockerViejo != null)
+            Destroy(rockerViejo.gameObject);
 
         HabilitarLucesAdicionalesEnURP();
         ConfigurarColliderPositivoEInteractable();
@@ -103,6 +108,15 @@ public class InterruptorLuz : MonoBehaviour
 
     void Update()
     {
+        // Bloquear el collider del switch cuando el jugador está detrás de la pared o en otro piso
+        // para que el rayo de XRRayInteractor JAMÁS atraviese muros para mostrar "UI Press / Grab"
+        temporizadorChequeoPared -= Time.unscaledDeltaTime;
+        if (temporizadorChequeoPared <= 0f)
+        {
+            temporizadorChequeoPared = 0.08f;
+            ActualizarDisponibilidadHitboxSegunPared();
+        }
+
         // Coherencia eléctrica total: si hay apagón general, NINGÚN foco puede parpadear ni quedar encendido
         if (!EnergiaGeneralCasaActiva)
         {
@@ -213,10 +227,13 @@ public class InterruptorLuz : MonoBehaviour
             Vector3 pos = l.transform.position;
             bool esSegundoPiso = pos.y > 3.6f;
 
-            if (!esSegundoPiso && pos.y > 2.70f && pos.y < 4.30f)
-                pos.y = 2.52f;
-            else if (esSegundoPiso && pos.y > 5.85f)
-                pos.y = 5.75f;
+            // El techo de Piso 1 está en Y=3.408 y el de Piso 2 en Y=6.281: colocar justo bajo el bulbo para iluminación uniforme sin anillos duros
+            if (!esSegundoPiso && pos.y > 3.24f && pos.y < 4.30f)
+                pos.y = 3.20f;
+            else if (!esSegundoPiso && pos.y < 2.95f && pos.y > 2.35f)
+                pos.y = 3.16f;
+            else if (esSegundoPiso && pos.y > 6.10f)
+                pos.y = 6.04f;
             l.transform.position = pos;
 
             // Convertir en lámpara arquitectónica real: cono ancho hacia abajo (evita mancha blanca en techo y evita atravesar muros laterales)
@@ -405,11 +422,98 @@ public class InterruptorLuz : MonoBehaviour
         }
     }
 
+    public bool EstaDelLadoFrontal(Vector3 puntoObservador)
+    {
+        Vector3 posSw = ObtenerPosicionMundial();
+        return Vector3.Dot(puntoObservador - posSw, normalFrenteMundial) > 0.035f;
+    }
+
+    private void ActualizarDisponibilidadHitboxSegunPared()
+    {
+        if (hitboxPositivo == null) return;
+        Camera cam = Camera.main;
+        if (cam == null)
+        {
+            if (!hitboxPositivo.enabled) hitboxPositivo.enabled = true;
+            return;
+        }
+
+        Vector3 posCam = cam.transform.position;
+        Vector3 posSw = ObtenerPosicionMundial();
+        bool mismoPiso = (posCam.y >= 3.15f) == (posSw.y >= 3.15f);
+        bool ladoCorrecto = mismoPiso &&
+                            Vector3.Distance(posCam, posSw) < 2.65f &&
+                            EstaDelLadoFrontal(posCam) &&
+                            InteractorUniversalVR.TieneLineaDeVisionDirecta(posCam, posSw + normalFrenteMundial * 0.025f, transform);
+
+        if (hitboxPositivo.enabled != ladoCorrecto)
+            hitboxPositivo.enabled = ladoCorrecto;
+    }
+
+    private Vector3 DetectarNormalFrontalFueraDePared(Bounds wb)
+    {
+        // La placa del switch mide ~0.11m x 0.19m y solo ~0.02m de grosor: el eje más delgado es la normal del muro
+        Vector3 sz = wb.size;
+        Vector3 ejeCandidato;
+        if (sz.x <= sz.y && sz.x <= sz.z)
+            ejeCandidato = Vector3.right;
+        else if (sz.z <= sz.x && sz.z <= sz.y)
+            ejeCandidato = Vector3.forward;
+        else
+            ejeCandidato = Vector3.up;
+
+        // Lanzar raycast corto a ambos lados (+eje y -eje) ignorando el propio switch para ver de qué lado está el muro sólido
+        float distMas = EspacioLibreEnDireccion(wb.center, ejeCandidato);
+        float distMenos = EspacioLibreEnDireccion(wb.center, -ejeCandidato);
+
+        if (Mathf.Abs(distMas - distMenos) > 0.015f)
+            return (distMas > distMenos) ? ejeCandidato : -ejeCandidato;
+
+        // Fallback hacia el centro de su habitación asignada
+        string cuarto = ObjetoAnomalia.NormalizarCuartoPorPosicion(wb.center, "", gameObject.name);
+        Vector3 haciaCentro = ObjetoAnomalia.ObtenerCentroDeHabitacion(cuarto) - wb.center;
+        return Vector3.Dot(haciaCentro, ejeCandidato) >= 0f ? ejeCandidato : -ejeCandidato;
+    }
+
+    private float EspacioLibreEnDireccion(Vector3 origen, Vector3 dir)
+    {
+        RaycastHit[] hits = Physics.RaycastAll(origen - dir * 0.005f, dir, 0.45f, ~0, QueryTriggerInteraction.Ignore);
+        float menor = 0.45f;
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider c = hits[i].collider;
+            if (c == null || c.isTrigger) continue;
+            if (c.transform == transform || c.transform.IsChildOf(transform)) continue;
+            if (hits[i].distance < menor)
+                menor = hits[i].distance;
+        }
+        return menor;
+    }
+
+    private void ActualizarVisualPalancaSwitch()
+    {
+        // NUNCA modificar transform.localRotation ni agregar cubos extra: la malla original de Light_switch ya tiene su propio botón modelado y queda al ras del muro
+    }
+
     public void ConfigurarColliderPositivoEInteractable()
     {
         BoxCollider colliderDirecto = GetComponent<BoxCollider>();
         if (colliderDirecto != null)
             colliderDirecto.enabled = false;
+
+        // Eliminar cualquier Palanca_Rocker_VR residual de versiones previas
+        Transform rockerViejo = transform.Find("Palanca_Rocker_VR");
+        if (rockerViejo != null)
+        {
+            if (Application.isPlaying) Destroy(rockerViejo.gameObject);
+            else DestroyImmediate(rockerViejo.gameObject);
+        }
+
+        MeshRenderer mr = GetComponent<MeshRenderer>();
+        Bounds wb = mr != null ? mr.bounds : new Bounds(transform.position, new Vector3(0.11f, 0.19f, 0.02f));
+        Vector3 centroMundial = wb.center;
+
+        normalFrenteMundial = DetectarNormalFrontalFueraDePared(wb);
 
         Transform hijoHitbox = transform.Find("Hitbox_VR_Positivo");
         if (hijoHitbox == null)
@@ -420,17 +524,13 @@ public class InterruptorLuz : MonoBehaviour
             hijoHitbox.SetParent(transform, false);
         }
 
-        MeshRenderer mr = GetComponent<MeshRenderer>();
-        Vector3 centroMundial = mr != null ? mr.bounds.center : transform.position;
-        hijoHitbox.position = centroMundial;
-        hijoHitbox.rotation = Quaternion.identity;
-
-        Vector3 ls = transform.lossyScale;
-        hijoHitbox.localScale = new Vector3(
-            Mathf.Abs(ls.x) > 0.0001f ? 1f / ls.x : 1f,
-            Mathf.Abs(ls.y) > 0.0001f ? 1f / ls.y : 1f,
-            Mathf.Abs(ls.z) > 0.0001f ? 1f / ls.z : 1f
-        );
+        // Colocar el hitbox exclusivamente DELANTE de la cara frontal del switch (+2.4cm hacia el cuarto) y delgado (4.5cm)
+        // para que jamás sobresalga por detrás de un muro divisorio
+        hijoHitbox.SetParent(null, true);
+        hijoHitbox.position = centroMundial + normalFrenteMundial * 0.024f;
+        hijoHitbox.rotation = Quaternion.LookRotation(normalFrenteMundial, Vector3.up);
+        hijoHitbox.localScale = Vector3.one;
+        hijoHitbox.SetParent(transform, true);
 
         hitboxPositivo = hijoHitbox.GetComponent<BoxCollider>();
         if (hitboxPositivo == null)
@@ -438,7 +538,7 @@ public class InterruptorLuz : MonoBehaviour
 
         hitboxPositivo.isTrigger = true;
         hitboxPositivo.center = Vector3.zero;
-        hitboxPositivo.size = new Vector3(0.24f, 0.24f, 0.24f);
+        hitboxPositivo.size = new Vector3(0.14f, 0.21f, 0.045f);
         hitboxPositivo.enabled = true;
 
         interactable = GetComponent<XRSimpleInteractable>();
@@ -468,10 +568,11 @@ public class InterruptorLuz : MonoBehaviour
         sonidoClick.playOnAwake = false;
         sonidoClick.spatialBlend = 1f;
         sonidoClick.minDistance = 0.5f;
-        sonidoClick.maxDistance = 8f;
+        sonidoClick.maxDistance = 7f;
 
-        if (sonidoClick.clip == null)
-            sonidoClick.clip = ObtenerClipClick();
+        AudioClip mejorClip = ObtenerClipClick();
+        if (mejorClip != null)
+            sonidoClick.clip = mejorClip;
     }
 
     public Vector3 ObtenerPosicionMundial()
@@ -515,7 +616,14 @@ public class InterruptorLuz : MonoBehaviour
 
     private void ProcesarInteraccion(IXRInteractor interactor)
     {
-        if (!InteractorUniversalVR.EstaDentroDeRangoYLineaDeVision(ObtenerPosicionMundial(), 1.90f, transform))
+        Vector3 posFrontalSwitch = ObtenerPosicionMundial() + normalFrenteMundial * 0.025f;
+        if (Camera.main != null && !EstaDelLadoFrontal(Camera.main.transform.position))
+            return;
+
+        if (interactor is Component compInteractor && !EstaDelLadoFrontal(compInteractor.transform.position))
+            return;
+
+        if (!InteractorUniversalVR.EstaDentroDeRangoYLineaDeVision(posFrontalSwitch, 1.90f, transform))
             return;
 
         if (ultimaInteraccionFrame == Time.frameCount) return;
@@ -524,8 +632,11 @@ public class InterruptorLuz : MonoBehaviour
         ultimaInteraccionFrame = Time.frameCount;
         ultimoTiempoInteraccion = Time.unscaledTime;
 
-        if (sonidoClick != null && sonidoClick.clip != null)
-            sonidoClick.PlayOneShot(sonidoClick.clip);
+        if (sonidoClick != null)
+        {
+            AudioClip c = clipSwitchReal != null ? clipSwitchReal : sonidoClick.clip;
+            if (c != null) sonidoClick.PlayOneShot(c, 0.85f);
+        }
 
         if (interactor is XRBaseInputInteractor inputInteractor)
             inputInteractor.SendHapticImpulse(0.45f, 0.1f);
@@ -533,7 +644,7 @@ public class InterruptorLuz : MonoBehaviour
         if (bloqueadaPorAnomalia || !EnergiaGeneralCasaActiva)
         {
             estaEncendida = !estaEncendida;
-            transform.localRotation = rotInicialSwitch * Quaternion.Euler(estaEncendida ? 0f : 12f, 0f, 0f);
+            ActualizarVisualPalancaSwitch();
             if (!EnergiaGeneralCasaActiva)
                 AplicarEstadoALuces(false);
             return;
@@ -544,7 +655,7 @@ public class InterruptorLuz : MonoBehaviour
 
         bool nuevoEstado = !estaEncendida;
         estaEncendida = nuevoEstado;
-        transform.localRotation = rotInicialSwitch * Quaternion.Euler(estaEncendida ? 0f : 12f, 0f, 0f);
+        ActualizarVisualPalancaSwitch();
 
         if (Application.isPlaying && gameObject.activeInHierarchy && delayConmutacion > 0.01f)
         {
@@ -573,7 +684,7 @@ public class InterruptorLuz : MonoBehaviour
         }
 
         estaEncendida = nuevoEstado;
-        transform.localRotation = rotInicialSwitch * Quaternion.Euler(estaEncendida ? 0f : 12f, 0f, 0f);
+        ActualizarVisualPalancaSwitch();
         AplicarEstadoALuces(estaEncendida && EnergiaGeneralCasaActiva);
     }
 
@@ -655,74 +766,51 @@ public class InterruptorLuz : MonoBehaviour
         }
     }
 
-    private static GameObject domoCorteOscuroVR;
-    private static Material matCorteOscuroVR;
+    private static bool enObturadorCamaraActivo = false;
+    private static int mascaraPrevCamara = ~0;
+    private static CameraClearFlags clearFlagsPrevCamara = CameraClearFlags.SolidColor;
+    private static Color colorFondoPrevCamara = Color.black;
 
-    private static GameObject ObtenerOCrearDomoCorteOscuro()
+    private static void LimpiarDomoAntiguoSiExiste(Camera cam)
     {
-        Camera cam = Camera.main;
-        if (cam == null) return null;
+        if (cam == null) return;
+        Transform domoViejo = cam.transform.Find("Corte_Oscuro_Reporte_VR");
+        if (domoViejo != null)
+            Destroy(domoViejo.gameObject);
+    }
 
-        if (domoCorteOscuroVR != null && domoCorteOscuroVR.transform.parent == cam.transform)
-            return domoCorteOscuroVR;
+    private static void ActivarObturadorNegroCamara(Camera cam, bool activar)
+    {
+        if (cam == null || FinalTurnoVR.EstaEnSecuenciaFinal) return;
+        LimpiarDomoAntiguoSiExiste(cam);
 
-        if (domoCorteOscuroVR != null)
-            Destroy(domoCorteOscuroVR);
-
-        domoCorteOscuroVR = new GameObject("Corte_Oscuro_Reporte_VR");
-        domoCorteOscuroVR.transform.SetParent(cam.transform, false);
-        domoCorteOscuroVR.transform.localPosition = Vector3.zero;
-        domoCorteOscuroVR.transform.localRotation = Quaternion.identity;
-
-        if (matCorteOscuroVR == null)
+        if (activar)
         {
-            Shader sh = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
-            matCorteOscuroVR = new Material(sh)
+            if (!enObturadorCamaraActivo)
             {
-                name = "Mat_CorteOscuro_VR",
-                color = Color.black,
-                renderQueue = 4000
-            };
-            matCorteOscuroVR.SetColor("_BaseColor", Color.black);
-        }
-
-        // 6 caras internas formando caja negra envolvente a 0.32m del visor (cubre 360° en Quest 2 y PC sin clipping de near plane)
-        (Vector3 pos, Vector3 rot)[] caras = new (Vector3, Vector3)[]
-        {
-            (new Vector3( 0.00f,  0.00f,  0.32f), new Vector3(  0f,   0f, 0f)),
-            (new Vector3( 0.00f,  0.00f, -0.32f), new Vector3(  0f, 180f, 0f)),
-            (new Vector3( 0.32f,  0.00f,  0.00f), new Vector3(  0f,  90f, 0f)),
-            (new Vector3(-0.32f,  0.00f,  0.00f), new Vector3(  0f, -90f, 0f)),
-            (new Vector3( 0.00f,  0.32f,  0.00f), new Vector3(-90f,   0f, 0f)),
-            (new Vector3( 0.00f, -0.32f,  0.00f), new Vector3( 90f,   0f, 0f)),
-        };
-
-        for (int i = 0; i < caras.Length; i++)
-        {
-            GameObject q = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            q.name = "Cara_Negra_" + i;
-            Collider c = q.GetComponent<Collider>();
-            if (c != null) Destroy(c);
-            q.transform.SetParent(domoCorteOscuroVR.transform, false);
-            q.transform.localPosition = caras[i].pos;
-            q.transform.localEulerAngles = caras[i].rot;
-            q.transform.localScale = new Vector3(0.68f, 0.68f, 1f);
-            MeshRenderer mr = q.GetComponent<MeshRenderer>();
-            if (mr != null)
-            {
-                mr.sharedMaterial = matCorteOscuroVR;
-                mr.shadowCastingMode = ShadowCastingMode.Off;
-                mr.receiveShadows = false;
+                mascaraPrevCamara = cam.cullingMask;
+                clearFlagsPrevCamara = cam.clearFlags;
+                colorFondoPrevCamara = cam.backgroundColor;
+                enObturadorCamaraActivo = true;
             }
+            // CullingMask = 0 oculta al 100% mandos blancos VR, rayos azules, etiquetas UI y geometría (cero clipping de caja negra!)
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = Color.black;
+            cam.cullingMask = 0;
         }
-
-        domoCorteOscuroVR.SetActive(false);
-        return domoCorteOscuroVR;
+        else if (enObturadorCamaraActivo)
+        {
+            enObturadorCamaraActivo = false;
+            cam.cullingMask = mascaraPrevCamara;
+            cam.clearFlags = clearFlagsPrevCamara;
+            cam.backgroundColor = colorFondoPrevCamara;
+        }
     }
 
     /// <summary>
-    /// Corte total de luz / parpadeo oscuro de cámara (0.28 s) al validar un reporte:
-    /// evita al 100% que cualquier entidad u objeto desaparezca "en el aire" frente al jugador.
+    /// Parpadeo eléctrico realista + obturador limpio de cámara al validar un reporte:
+    /// Si el jugador está lejos y sin línea de visión, solo parpadea la luz del cuarto lejano sin cegarlo;
+    /// si está en el mismo cuarto o viendo la anomalía, hace un parpadeo eléctrico + corte de cámara 100% limpio (sin mandos ni rayos visibles).
     /// </summary>
     public static void EjecutarMicroCorteYRestaurar(MonoBehaviour runner, ObjetoAnomalia anomalia, System.Action alRestaurarCallback = null)
     {
@@ -742,18 +830,36 @@ public class InterruptorLuz : MonoBehaviour
 
     private static IEnumerator RutinaMicroCorteYRestaurar(ObjetoAnomalia anomalia, System.Action alRestaurarCallback)
     {
+        Camera cam = Camera.main;
         Vector3 posAnom = anomalia != null ? anomalia.ObtenerPosicionVisualActiva() : Vector3.zero;
-        InterruptorLuz swCercano = BuscarSwitchMasCercano(posAnom);
-        bool teniaLuz = swCercano != null && swCercano.estaEncendida && EnergiaGeneralCasaActiva;
+        InterruptorLuz swAnom = BuscarSwitchMasCercano(posAnom);
+        InterruptorLuz swJugador = cam != null ? BuscarSwitchMasCercano(cam.transform.position) : null;
 
-        GameObject domoNegro = ObtenerOCrearDomoCorteOscuro();
-        if (domoNegro != null)
-            domoNegro.SetActive(true);
+        bool teniaLuzAnom = swAnom != null && swAnom.estaEncendida && EnergiaGeneralCasaActiva;
+        bool teniaLuzJug = swJugador != null && swJugador != swAnom && swJugador.estaEncendida && EnergiaGeneralCasaActiva;
 
-        if (teniaLuz)
-            swCercano.AplicarEstadoALuces(false);
+        bool jugadorVeAnomaliaOMismoCuarto = false;
+        if (cam != null && anomalia != null)
+        {
+            jugadorVeAnomaliaOMismoCuarto = ObjetoAnomalia.PuntoVisibleOMismoCuartoJugador(cam.transform, posAnom, anomalia.nombreCuarto);
+        }
 
-        yield return new WaitForSeconds(0.16f);
+        // 1. Breve caída de tensión eléctrica previa (0.06s) como reacción de la casa al contener la anomalía
+        if (teniaLuzAnom) swAnom.AplicarEstadoALuces(false);
+        if (jugadorVeAnomaliaOMismoCuarto && teniaLuzJug) swJugador.AplicarEstadoALuces(false);
+        yield return new WaitForSeconds(0.055f);
+
+        if (teniaLuzAnom && swAnom != null) swAnom.AplicarEstadoALuces(true);
+        yield return new WaitForSeconds(0.035f);
+
+        // 2. Corte de contención: apagar luz del cuarto afectado y cerrar obturador de cámara SOLO si el jugador podría ver el cambio
+        if (teniaLuzAnom && swAnom != null) swAnom.AplicarEstadoALuces(false);
+        if (jugadorVeAnomaliaOMismoCuarto && teniaLuzJug && swJugador != null) swJugador.AplicarEstadoALuces(false);
+
+        if (jugadorVeAnomaliaOMismoCuarto && cam != null)
+            ActivarObturadorNegroCamara(cam, true);
+
+        yield return new WaitForSeconds(jugadorVeAnomaliaOMismoCuarto ? 0.14f : 0.06f);
 
         if (anomalia != null)
         {
@@ -763,13 +869,70 @@ public class InterruptorLuz : MonoBehaviour
 
         alRestaurarCallback?.Invoke();
 
-        yield return new WaitForSeconds(0.12f);
+        yield return new WaitForSeconds(jugadorVeAnomaliaOMismoCuarto ? 0.08f : 0.04f);
 
-        if (teniaLuz && swCercano != null)
-            swCercano.RefrescarSegunEnergiaGeneral();
+        if (cam != null)
+            ActivarObturadorNegroCamara(cam, false);
 
-        if (domoNegro != null)
-            domoNegro.SetActive(false);
+        if (teniaLuzAnom && swAnom != null)
+            swAnom.RefrescarSegunEnergiaGeneral();
+        if (teniaLuzJug && swJugador != null)
+            swJugador.RefrescarSegunEnergiaGeneral();
+    }
+
+    /// <summary>
+    /// Cuando se manifiesta una anomalía nueva: parpadea brevemente el foco de esa habitación lejana,
+    /// y si por algún caso extremo el jugador tuviera línea de visión hacia el punto, aplica un micro-parpadeo de 0.11s para que jamás aparezca en el aire.
+    /// </summary>
+    public static void EjecutarTransicionAparicionAnomalia(MonoBehaviour runner, ObjetoAnomalia anomalia, TipoAnomalia? tipoForzado)
+    {
+        if (anomalia == null) return;
+        if (runner == null || !runner.gameObject.activeInHierarchy)
+        {
+            anomalia.ActivarAnomalia(tipoForzado);
+            return;
+        }
+        runner.StartCoroutine(RutinaAparicionAnomaliaConParpadeo(anomalia, tipoForzado));
+    }
+
+    private static IEnumerator RutinaAparicionAnomaliaConParpadeo(ObjetoAnomalia anomalia, TipoAnomalia? tipoForzado)
+    {
+        Camera cam = Camera.main;
+        MeshRenderer mr = anomalia.GetComponent<MeshRenderer>();
+        Vector3 posPrev = mr != null ? mr.bounds.center : anomalia.transform.position;
+        string nLow = anomalia.gameObject.name.ToLowerInvariant();
+        bool esMovil = nLow.StartsWith("anomalia_flawed") || nLow.StartsWith("anomalia_pureform") ||
+                       nLow.StartsWith("anomalia_preacher") || nLow.StartsWith("anomalia_corpse") ||
+                       nLow.Contains("puertaabismal");
+
+        bool visibleAntes = !esMovil && cam != null &&
+                            ObjetoAnomalia.PuntoVisibleOMismoCuartoJugador(cam.transform, posPrev, anomalia.nombreCuarto);
+
+        if (visibleAntes && cam != null)
+            ActivarObturadorNegroCamara(cam, true);
+
+        anomalia.ActivarAnomalia(tipoForzado);
+
+        Vector3 posReal = anomalia.ObtenerPosicionVisualActiva();
+        InterruptorLuz swCuarto = BuscarSwitchMasCercano(posReal);
+        bool teniaLuz = swCuarto != null && swCuarto.estaEncendida && EnergiaGeneralCasaActiva && !swCuarto.parpadeoAnomaloActivo;
+
+        bool visibleDespues = cam != null &&
+                              ObjetoAnomalia.PuntoVisibleOMismoCuartoJugador(cam.transform, posReal, anomalia.nombreCuarto);
+
+        if (visibleDespues && !visibleAntes && cam != null)
+            ActivarObturadorNegroCamara(cam, true);
+
+        if (teniaLuz)
+            swCuarto.AplicarEstadoALuces(false);
+
+        yield return new WaitForSeconds((visibleAntes || visibleDespues) ? 0.11f : 0.07f);
+
+        if (cam != null)
+            ActivarObturadorNegroCamara(cam, false);
+
+        if (teniaLuz && swCuarto != null)
+            swCuarto.RefrescarSegunEnergiaGeneral();
     }
 
     public static InterruptorLuz BuscarSwitchMasCercano(Vector3 pos)
@@ -800,8 +963,18 @@ public class InterruptorLuz : MonoBehaviour
         ProcesarInteraccion(null);
     }
 
-    private static AudioClip ObtenerClipClick()
+    private AudioClip ObtenerClipClick()
     {
+        if (clipSwitchReal != null)
+            return clipSwitchReal;
+
+#if UNITY_EDITOR
+        if (clipClickRealCache == null)
+            clipClickRealCache = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/168860__orginaljun__light-switch-01.mp3");
+#endif
+        if (clipClickRealCache != null)
+            return clipClickRealCache;
+
         if (clipClickProcedural == null)
         {
             int sampleRate = 22050;

@@ -85,6 +85,10 @@ public class ObjetoAnomalia : MonoBehaviour
     private static Material materialElectricoFallback;
     private static Material materialImageryFallback;
     private static Material materialCieloDiaVentana;
+    private static Material materialDomoCieloPanoramicoDia;
+    private static Material materialHazVolumetricoSol;
+    private static Material materialProyeccionSolPiso;
+    private static Mesh mallaDomoCieloCurvo;
     private static Material materialRastroPolvo;
     private static Material materialSombraPureForm;
     private static Material materialOjosBlancosPureForm;
@@ -376,6 +380,50 @@ public class ObjetoAnomalia : MonoBehaviour
         return new Vector3(15.0f, 0.41f, -3.0f);
     }
 
+    /// <summary>
+    /// Devuelve una altura de suelo 100% segura por piso arquitectónico:
+    /// En Piso 2 (Floor Y=3.732, techo Cocina Y=3.408) NUNCA permite bajar de 3.74f aunque un Raycast atraviese colliders_floor_02 (3.528) o caiga a la Cocina.
+    /// </summary>
+    public static float ObtenerAlturaPisoSegura(Vector3 punto, string cuarto = "")
+    {
+        bool esPiso2 = punto.y > 3.15f ||
+                       (!string.IsNullOrEmpty(cuarto) && (cuarto.StartsWith("Bedroom", System.StringComparison.OrdinalIgnoreCase) || string.Equals(cuarto, "Bathroom", System.StringComparison.OrdinalIgnoreCase) && punto.y > 2.5f));
+        if (esPiso2)
+        {
+            float baseP2 = 3.74f;
+            if (Physics.Raycast(new Vector3(punto.x, baseP2 + 0.9f, punto.z), Vector3.down, out RaycastHit hit2, 1.2f, ~0, QueryTriggerInteraction.Ignore))
+            {
+                if (hit2.point.y >= 3.73f && hit2.point.y <= 3.82f)
+                    return hit2.point.y;
+            }
+            return baseP2;
+        }
+
+        bool esGaraje = string.Equals(cuarto, "Garage", System.StringComparison.OrdinalIgnoreCase) || punto.x > 18.62f;
+        float minP1 = esGaraje ? 0.15f : 0.405f;
+        float maxP1 = esGaraje ? 0.25f : 0.48f;
+        if (Physics.Raycast(new Vector3(punto.x, minP1 + 0.9f, punto.z), Vector3.down, out RaycastHit hit1, 1.3f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            if (hit1.point.y >= minP1 - 0.02f && hit1.point.y <= maxP1)
+                return Mathf.Max(minP1, hit1.point.y);
+        }
+        return esGaraje ? 0.16f : 0.41f;
+    }
+
+    private static bool CuartoTieneOtraAnomaliaActiva(string cuarto, ObjetoAnomalia ignorar)
+    {
+        if (string.IsNullOrEmpty(cuarto) || TabletSistemaVR.Instancia == null) return false;
+        List<ObjetoAnomalia> lista = TabletSistemaVR.Instancia.todasLasAnomalias;
+        for (int i = 0; i < lista.Count; i++)
+        {
+            ObjetoAnomalia a = lista[i];
+            if (a == null || a == ignorar || !a.estaActiva) continue;
+            if (string.Equals(a.nombreCuarto, cuarto, System.StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     private static readonly string[] MensajesParedEspanol = new string[]
     {
         "NADA VALE EL RIESGO",
@@ -500,7 +548,7 @@ public class ObjetoAnomalia : MonoBehaviour
                     else DestroyImmediate(dioramaViejo.gameObject);
                 }
 
-                // El cristal usa un velo translúcido muy suave de contraluz solar (dejando ver los arbustos, pasto y jardín REALES detrás)
+                // El cristal usa un resplandor solar óptico limpio (dejando ver el jardín real iluminado y el cielo diurno panorámico al fondo)
                 MeshRenderer mrExtra = extra.GetComponent<MeshRenderer>();
                 if (mrExtra != null)
                 {
@@ -510,7 +558,7 @@ public class ObjetoAnomalia : MonoBehaviour
                     mrExtra.receiveShadows = false;
                 }
 
-                // Iluminar de día el JARDÍN Y EXTERIOR 3D REAL afuera de esa ventana + proyectar haz de sol hacia adentro del cuarto
+                // Construir horizonte diurno panorámico inmune a la niebla negra nocturna + haces volumétricos de sol entrando al cuarto + luces
                 ConfigurarIluminacionDiaExteriorReal(extra.transform, wb, haciaAfuera.normalized);
             }
         }
@@ -568,14 +616,7 @@ public class ObjetoAnomalia : MonoBehaviour
     private void RepararAlturaYEstiloEntidad(string nombreLower)
     {
         Vector3 pos = transform.position;
-        float alturaPiso = pos.y > 2.8f ? 3.74f : 0.41f;
-
-        Vector3 rayStart = new Vector3(pos.x, pos.y + 0.8f, pos.z);
-        if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit hit, 4.0f, ~0, QueryTriggerInteraction.Ignore))
-        {
-            if (hit.point.y < pos.y + 0.2f)
-                alturaPiso = hit.point.y;
-        }
+        float alturaPiso = ObtenerAlturaPisoSegura(pos, nombreCuarto);
 
         Transform visual = transform.Find("Modelo_Visual_(Reemplazar_Por_FBX)");
 
@@ -622,12 +663,7 @@ public class ObjetoAnomalia : MonoBehaviour
 
             AudioSource aud = GetComponent<AudioSource>();
             if (aud == null) aud = gameObject.AddComponent<AudioSource>();
-            aud.playOnAwake = false;
-            aud.spatialBlend = 1f;
-            aud.minDistance = 1.2f;
-            aud.maxDistance = 12f;
-            aud.volume = 0.78f;
-            aud.loop = true;
+            ConfigurarAudioEspacialPreacher(aud);
 
             foreach (var v in posiblesVariantes)
             {
@@ -1047,14 +1083,17 @@ public class ObjetoAnomalia : MonoBehaviour
             }
         }
 
-        // 6. ¿Suena algo? (Preacher = susurros audibles en bucle; Electrical = estática/zumbido)
+        // 6. ¿Suena algo? (Preacher = audio original extraído a volumen bajo y atenuado por cuarto; Electrical = estática/zumbido)
         if (varianteActual.audioEvento != null)
         {
             if (varianteActual.tipo == TipoAnomalia.Preacher)
             {
-                varianteActual.audioEvento.clip = ObtenerClipSusurrosPreacher();
+                ConfigurarAudioEspacialPreacher(varianteActual.audioEvento);
+                if (varianteActual.audioEvento.clip == null || varianteActual.audioEvento.clip.name == "SusurrosPreacher")
+                    varianteActual.audioEvento.clip = ObtenerClipSusurrosPreacher();
                 varianteActual.audioEvento.pitch = 1.0f;
-                varianteActual.audioEvento.volume = 0.85f;
+                // Inicia en silencio y ActualizarAtenuacionEspacialPreacher() regula el volumen real según piso/muros/cercanía
+                varianteActual.audioEvento.volume = 0f;
                 varianteActual.sonidoEnBucle = true;
             }
             else if (varianteActual.audioEvento.clip == null && varianteActual.tipo == TipoAnomalia.Electrical)
@@ -1120,8 +1159,17 @@ public class ObjetoAnomalia : MonoBehaviour
             List<PuntoClosetPreacher> closetsDisponibles = new List<PuntoClosetPreacher>();
             for (int i = 0; i < PuntosClosetsPreacher.Length; i++)
             {
-                if (!PuntoVisibleOMismoCuartoJugador(cam, PuntosClosetsPreacher[i].posEnCloset, PuntosClosetsPreacher[i].cuarto))
+                if (!CuartoTieneOtraAnomaliaActiva(PuntosClosetsPreacher[i].cuarto, this) &&
+                    !PuntoVisibleOMismoCuartoJugador(cam, PuntosClosetsPreacher[i].posEnCloset, PuntosClosetsPreacher[i].cuarto))
                     closetsDisponibles.Add(PuntosClosetsPreacher[i]);
+            }
+            if (closetsDisponibles.Count == 0)
+            {
+                for (int i = 0; i < PuntosClosetsPreacher.Length; i++)
+                {
+                    if (!PuntoVisibleOMismoCuartoJugador(cam, PuntosClosetsPreacher[i].posEnCloset, PuntosClosetsPreacher[i].cuarto))
+                        closetsDisponibles.Add(PuntosClosetsPreacher[i]);
+                }
             }
             if (closetsDisponibles.Count == 0)
                 closetsDisponibles.AddRange(PuntosClosetsPreacher);
@@ -1157,13 +1205,7 @@ public class ObjetoAnomalia : MonoBehaviour
                 }
             }
 
-            float pisoCloset = posFinalPreacher.y;
-            if (Physics.Raycast(posFinalPreacher + Vector3.up * 1.0f, Vector3.down, out RaycastHit hitC, 2.5f, ~0, QueryTriggerInteraction.Ignore))
-            {
-                if (hitC.point.y < posFinalPreacher.y + 0.35f)
-                    pisoCloset = hitC.point.y;
-            }
-
+            float pisoCloset = ObtenerAlturaPisoSegura(posFinalPreacher, nombreCuarto);
             transform.position = new Vector3(posFinalPreacher.x, pisoCloset, posFinalPreacher.z);
             transform.rotation = Quaternion.Euler(0f, rotFinalPreacherY, 0f);
             return;
@@ -1218,8 +1260,17 @@ public class ObjetoAnomalia : MonoBehaviour
                 List<InfoAsientoCasa> asientosLibres = new List<InfoAsientoCasa>();
                 for (int i = 0; i < cacheAsientosFlawed.Count; i++)
                 {
-                    if (!PuntoVisibleOMismoCuartoJugador(cam, cacheAsientosFlawed[i].posPisoFrenteAsiento, cacheAsientosFlawed[i].cuarto))
+                    if (!CuartoTieneOtraAnomaliaActiva(cacheAsientosFlawed[i].cuarto, this) &&
+                        !PuntoVisibleOMismoCuartoJugador(cam, cacheAsientosFlawed[i].posPisoFrenteAsiento, cacheAsientosFlawed[i].cuarto))
                         asientosLibres.Add(cacheAsientosFlawed[i]);
+                }
+                if (asientosLibres.Count == 0)
+                {
+                    for (int i = 0; i < cacheAsientosFlawed.Count; i++)
+                    {
+                        if (!PuntoVisibleOMismoCuartoJugador(cam, cacheAsientosFlawed[i].posPisoFrenteAsiento, cacheAsientosFlawed[i].cuarto))
+                            asientosLibres.Add(cacheAsientosFlawed[i]);
+                    }
                 }
                 if (asientosLibres.Count == 0)
                     asientosLibres.AddRange(cacheAsientosFlawed);
@@ -1228,7 +1279,8 @@ public class ObjetoAnomalia : MonoBehaviour
                 nombreCuarto = asiento.cuarto;
                 flawedSentadoActivoActual = true;
 
-                transform.position = asiento.posPisoFrenteAsiento;
+                float pisoSegAsiento = ObtenerAlturaPisoSegura(asiento.posPisoFrenteAsiento, nombreCuarto);
+                transform.position = new Vector3(asiento.posPisoFrenteAsiento.x, pisoSegAsiento, asiento.posPisoFrenteAsiento.z);
                 transform.rotation = asiento.rotSentado;
 
                 if (visualFlawed != null)
@@ -1259,8 +1311,19 @@ public class ObjetoAnomalia : MonoBehaviour
         for (int i = 0; i < PuntosHabitaciones.Length; i++)
         {
             PuntoAparicionCuarto p = PuntosHabitaciones[i];
-            if (!PuntoVisibleOMismoCuartoJugador(cam, p.posCentro, p.cuarto))
+            if (!CuartoTieneOtraAnomaliaActiva(p.cuarto, this) &&
+                !PuntoVisibleOMismoCuartoJugador(cam, p.posCentro, p.cuarto))
                 candidatos.Add(p);
+        }
+
+        if (candidatos.Count == 0)
+        {
+            for (int i = 0; i < PuntosHabitaciones.Length; i++)
+            {
+                PuntoAparicionCuarto p = PuntosHabitaciones[i];
+                if (!PuntoVisibleOMismoCuartoJugador(cam, p.posCentro, p.cuarto))
+                    candidatos.Add(p);
+            }
         }
 
         if (candidatos.Count == 0)
@@ -1270,14 +1333,7 @@ public class ObjetoAnomalia : MonoBehaviour
         nombreCuarto = elegido.cuarto;
 
         Vector3 posElegida = elegido.posCentro;
-        float alturaPiso = posElegida.y;
-
-        Vector3 rayStart = new Vector3(posElegida.x, posElegida.y + 1.1f, posElegida.z);
-        if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit hit, 3.0f, ~0, QueryTriggerInteraction.Ignore))
-        {
-            if (hit.point.y < posElegida.y + 0.35f)
-                alturaPiso = hit.point.y;
-        }
+        float alturaPiso = ObtenerAlturaPisoSegura(posElegida, nombreCuarto);
 
         transform.position = new Vector3(posElegida.x, alturaPiso, posElegida.z);
         Vector3 mirarCentro = cam != null ? (cam.position - transform.position) : Vector3.forward;
@@ -1557,12 +1613,7 @@ public class ObjetoAnomalia : MonoBehaviour
         }
 
         // CASO 4: ACOSTADO EN EL SUELO (Sala, Cocina, Garaje o Lavandería)
-        float pisoY = elegido.posCentro.y;
-        if (Physics.Raycast(elegido.posCentro + Vector3.up * 1.1f, Vector3.down, out RaycastHit hitPiso, 3.0f, ~0, QueryTriggerInteraction.Ignore))
-        {
-            if (hitPiso.point.y < elegido.posCentro.y + 0.35f)
-                pisoY = hitPiso.point.y;
-        }
+        float pisoY = ObtenerAlturaPisoSegura(elegido.posCentro, nombreCuarto);
 
         if (grpAcostado != null)
         {
@@ -1587,8 +1638,17 @@ public class ObjetoAnomalia : MonoBehaviour
         List<PuntoAparicionCuarto> candidatos = new List<PuntoAparicionCuarto>();
         for (int i = 0; i < PuntosHabitaciones.Length; i++)
         {
-            if (!PuntoVisibleOMismoCuartoJugador(cam, PuntosHabitaciones[i].posCentro, PuntosHabitaciones[i].cuarto))
+            if (!CuartoTieneOtraAnomaliaActiva(PuntosHabitaciones[i].cuarto, this) &&
+                !PuntoVisibleOMismoCuartoJugador(cam, PuntosHabitaciones[i].posCentro, PuntosHabitaciones[i].cuarto))
                 candidatos.Add(PuntosHabitaciones[i]);
+        }
+        if (candidatos.Count == 0)
+        {
+            for (int i = 0; i < PuntosHabitaciones.Length; i++)
+            {
+                if (!PuntoVisibleOMismoCuartoJugador(cam, PuntosHabitaciones[i].posCentro, PuntosHabitaciones[i].cuarto))
+                    candidatos.Add(PuntosHabitaciones[i]);
+            }
         }
         if (candidatos.Count == 0)
             candidatos.AddRange(PuntosHabitaciones);
@@ -1634,12 +1694,7 @@ public class ObjetoAnomalia : MonoBehaviour
             }
         }
 
-        float alturaPiso = posObjetivo.y;
-        if (Physics.Raycast(posObjetivo + Vector3.up * 1.1f, Vector3.down, out RaycastHit hitP, 3.0f, ~0, QueryTriggerInteraction.Ignore))
-        {
-            if (hitP.point.y < posObjetivo.y + 0.35f)
-                alturaPiso = hitP.point.y;
-        }
+        float alturaPiso = ObtenerAlturaPisoSegura(posObjetivo, nombreCuarto);
 
         transform.position = new Vector3(posObjetivo.x, alturaPiso, posObjetivo.z);
 
@@ -1783,31 +1838,33 @@ public class ObjetoAnomalia : MonoBehaviour
     {
         if (materialCieloDiaVentana != null) return materialCieloDiaVentana;
 
-        int w = 64;
-        int h = 64;
+        int w = 128;
+        int h = 128;
         Texture2D tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
         {
-            name = "Tex_VeloSolCristal_Unknown_VR",
+            name = "Tex_GlareSolCristal_Unknown_VR",
             wrapMode = TextureWrapMode.Clamp,
             filterMode = FilterMode.Bilinear
         };
 
-        // Velo translúcido de resplandor solar y cielo celeste en el vidrio (permite ver el jardín y arbustos reales iluminados afuera)
-        Color cieloSuave = new Color(0.70f, 0.88f, 1.00f, 0.16f);
-        Color solCentro = new Color(1.00f, 0.97f, 0.88f, 0.34f);
-
+        // Deslumbramiento óptico solar limpio en el vidrio: casi transparente en los bordes (para ver nítido el jardín real y el cielo)
+        // y halo diagonal cálido de sol matutino arriba al centro
         for (int y = 0; y < h; y++)
         {
             float v = (float)y / (h - 1);
             for (int x = 0; x < w; x++)
             {
                 float u = (float)x / (w - 1);
-                float dx = (u - 0.5f) * 1.4f;
-                float dy = (v - 0.58f) * 1.2f;
-                float dist = Mathf.Sqrt(dx * dx + dy * dy);
-                float halo = Mathf.Pow(Mathf.Clamp01(1f - dist), 1.5f);
-                Color c = Color.Lerp(cieloSuave, solCentro, halo);
-                tex.SetPixel(x, y, c);
+                float dx = (u - 0.56f) * 1.55f;
+                float dy = (v - 0.68f) * 1.45f;
+                float distSol = Mathf.Sqrt(dx * dx + dy * dy);
+                float nucleo = Mathf.Exp(-distSol * distSol * 7.5f);
+                float rayoDiag = Mathf.Exp(-Mathf.Pow((u - 0.56f) + (v - 0.68f) * 0.65f, 2f) * 18f) * Mathf.Clamp01(1.1f - distSol);
+                float borde = Mathf.Clamp01(Mathf.Min(Mathf.Min(u, 1f - u), Mathf.Min(v, 1f - v)) * 7f);
+
+                float alfa = Mathf.Clamp(0.04f + nucleo * 0.34f + rayoDiag * 0.14f, 0.03f, 0.42f) * Mathf.Lerp(0.45f, 1f, borde);
+                Color col = Color.Lerp(new Color(0.80f, 0.92f, 1.00f, alfa), new Color(1.00f, 0.98f, 0.90f, alfa), Mathf.Clamp01(nucleo * 1.5f + 0.25f));
+                tex.SetPixel(x, y, col);
             }
         }
         tex.Apply();
@@ -1816,18 +1873,316 @@ public class ObjetoAnomalia : MonoBehaviour
         materialCieloDiaVentana = new Material(sh)
         {
             name = "Mat_VeloSol_Ventana_Unknown",
-            color = new Color(1f, 0.98f, 0.92f, 0.30f)
+            color = Color.white
         };
         materialCieloDiaVentana.SetTexture("_BaseMap", tex);
+        materialCieloDiaVentana.SetTexture("_MainTex", tex);
         materialCieloDiaVentana.mainTexture = tex;
         return materialCieloDiaVentana;
     }
 
+    private static Material ObtenerMaterialDomoCieloPanoramicoDia()
+    {
+        if (materialDomoCieloPanoramicoDia != null) return materialDomoCieloPanoramicoDia;
+
+        int w = 256;
+        int h = 192;
+        Texture2D tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+        {
+            name = "Tex_DomoCieloDia_Unknown_VR",
+            wrapMode = TextureWrapMode.Clamp,
+            filterMode = FilterMode.Bilinear
+        };
+
+        // Cielo diurno hiper-luminoso (inmune a la niebla negra nocturna gracias a Sprites/Default):
+        // Elimina al 100% el vacío negro detrás de los arbustos/cerca y muestra cielo azul celeste, nubes soleadas, disco solar y bruma matinal
+        Color azulCenit    = new Color(0.28f, 0.61f, 0.96f, 1f);
+        Color celesteMedio = new Color(0.62f, 0.85f, 1.00f, 1f);
+        Color oroHorizonte = new Color(1.00f, 0.96f, 0.86f, 1f);
+        Color pradoLejano  = new Color(0.42f, 0.56f, 0.36f, 1f);
+        Color arboledaSol  = new Color(0.30f, 0.44f, 0.29f, 1f);
+
+        for (int y = 0; y < h; y++)
+        {
+            float v = (float)y / (h - 1);
+            for (int x = 0; x < w; x++)
+            {
+                float u = (float)x / (w - 1);
+                Color col;
+
+                // Línea de horizonte suave con arboleda lejana bañada por bruma solar matutina (v < 0.24)
+                float siluetaArboles = 0.21f + (Mathf.PerlinNoise(u * 14f + 3.1f, 1.7f) - 0.5f) * 0.065f
+                                             + (Mathf.PerlinNoise(u * 34f + 7.4f, 4.2f) - 0.5f) * 0.025f;
+                if (v < siluetaArboles)
+                {
+                    float tTierra = Mathf.Clamp01(v / Mathf.Max(0.05f, siluetaArboles));
+                    Color baseVeg = Color.Lerp(pradoLejano, arboledaSol, Mathf.PerlinNoise(u * 22f, v * 18f));
+                    // Bruma atmosférica dorada cerca del horizonte para profundidad realista
+                    col = Color.Lerp(baseVeg, oroHorizonte, Mathf.Pow(tTierra, 2.2f) * 0.62f);
+                }
+                else
+                {
+                    float tCielo = Mathf.Clamp01((v - 0.20f) / 0.80f);
+                    col = tCielo < 0.38f
+                        ? Color.Lerp(oroHorizonte, celesteMedio, tCielo / 0.38f)
+                        : Color.Lerp(celesteMedio, azulCenit, (tCielo - 0.38f) / 0.62f);
+
+                    // Nubes cúmulos suaves iluminadas desde arriba
+                    float n1 = Mathf.PerlinNoise(u * 4.8f + 1.4f, v * 6.2f + 2.3f);
+                    float n2 = Mathf.PerlinNoise(u * 11.5f + 5.2f, v * 13.0f + 0.8f);
+                    float nube = Mathf.SmoothStep(0.50f, 0.78f, n1 * 0.72f + n2 * 0.28f) * Mathf.Clamp01((v - 0.24f) * 3.2f);
+                    col = Color.Lerp(col, new Color(1.0f, 0.99f, 0.96f, 1f), nube * 0.72f);
+
+                    // Sol matutino cegador + corona atmosférica Mie
+                    float dx = (u - 0.55f) * 1.65f;
+                    float dy = (v - 0.58f) * 1.15f;
+                    float dSol = Mathf.Sqrt(dx * dx + dy * dy);
+                    float corona = Mathf.Exp(-dSol * 4.2f) * 0.68f + Mathf.Exp(-dSol * dSol * 55f) * 0.95f;
+                    col = Color.Lerp(col, new Color(1.0f, 0.99f, 0.93f, 1f), Mathf.Clamp01(corona));
+                }
+
+                // Desvanecer únicamente el borde lateral extremo del arco para que nunca se note un corte duro
+                float fadeBordeU = Mathf.Clamp01(Mathf.Min(u, 1f - u) * 9.0f);
+                col.a = fadeBordeU;
+                tex.SetPixel(x, y, col);
+            }
+        }
+        tex.Apply();
+
+        Shader sh = Shader.Find("Sprites/Default") ?? Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Standard");
+        materialDomoCieloPanoramicoDia = new Material(sh)
+        {
+            name = "Mat_DomoCieloPanoramicoDia_Unknown",
+            color = Color.white
+        };
+        materialDomoCieloPanoramicoDia.SetTexture("_BaseMap", tex);
+        materialDomoCieloPanoramicoDia.SetTexture("_MainTex", tex);
+        materialDomoCieloPanoramicoDia.mainTexture = tex;
+        return materialDomoCieloPanoramicoDia;
+    }
+
+    private static Mesh ObtenerMallaArcoPanoramicoCielo()
+    {
+        if (mallaDomoCieloCurvo != null) return mallaDomoCieloCurvo;
+
+        // Semicilindro curvo de 148° que abraza toda la vista exterior desde cualquier ángulo dentro de la habitación
+        const int segsX = 18;
+        const float radio = 4.55f;
+        const float alto = 6.8f;
+        const float anguloMaxGrados = 74f;
+
+        Vector3[] verts = new Vector3[(segsX + 1) * 2];
+        Vector2[] uvs = new Vector2[(segsX + 1) * 2];
+        int[] tris = new int[segsX * 6];
+
+        for (int i = 0; i <= segsX; i++)
+        {
+            float u = (float)i / segsX;
+            float angRad = Mathf.Lerp(-anguloMaxGrados, anguloMaxGrados, u) * Mathf.Deg2Rad;
+            float x = Mathf.Sin(angRad) * radio;
+            float z = Mathf.Cos(angRad) * radio;
+
+            verts[i * 2 + 0] = new Vector3(x, -2.2f, z);
+            verts[i * 2 + 1] = new Vector3(x, alto - 2.2f, z);
+            uvs[i * 2 + 0] = new Vector2(u, 0f);
+            uvs[i * 2 + 1] = new Vector2(u, 1f);
+
+            if (i < segsX)
+            {
+                int b = i * 2;
+                int t = i * 6;
+                // Caras mirando hacia adentro (-Z/origen, es decir, hacia la ventana de la casa)
+                tris[t + 0] = b + 0;
+                tris[t + 1] = b + 1;
+                tris[t + 2] = b + 2;
+                tris[t + 3] = b + 2;
+                tris[t + 4] = b + 1;
+                tris[t + 5] = b + 3;
+            }
+        }
+
+        mallaDomoCieloCurvo = new Mesh { name = "Mesh_ArcoCieloDia_Unknown" };
+        mallaDomoCieloCurvo.vertices = verts;
+        mallaDomoCieloCurvo.uv = uvs;
+        mallaDomoCieloCurvo.triangles = tris;
+        mallaDomoCieloCurvo.RecalculateNormals();
+        mallaDomoCieloCurvo.RecalculateBounds();
+        return mallaDomoCieloCurvo;
+    }
+
+    private static Material ObtenerMaterialHazVolumetricoSol()
+    {
+        if (materialHazVolumetricoSol != null) return materialHazVolumetricoSol;
+
+        int w = 64, h = 64;
+        Texture2D tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+        {
+            name = "Tex_HazVolumetricoSol_Unknown",
+            wrapMode = TextureWrapMode.Clamp,
+            filterMode = FilterMode.Bilinear
+        };
+
+        for (int y = 0; y < h; y++)
+        {
+            // v=1 junto al cristal de la ventana, v=0 al desvanecerse dentro del cuarto
+            float v = (float)y / (h - 1);
+            float longFade = Mathf.Pow(v, 1.35f) * Mathf.Clamp01((1f - v) * 9f);
+            for (int x = 0; x < w; x++)
+            {
+                float u = (float)x / (w - 1);
+                float latFade = Mathf.Sin(u * Mathf.PI);
+                // Sutiles franjas de barrotes de ventana en el haz de luz
+                float franjas = 0.82f + 0.18f * Mathf.Sin(u * Mathf.PI * 5f);
+                float alfa = longFade * latFade * latFade * franjas * 0.16f;
+                tex.SetPixel(x, y, new Color(1.0f, 0.96f, 0.82f, alfa));
+            }
+        }
+        tex.Apply();
+
+        Shader sh = Shader.Find("Sprites/Default") ?? Shader.Find("Universal Render Pipeline/Unlit");
+        materialHazVolumetricoSol = new Material(sh)
+        {
+            name = "Mat_HazVolumetricoSol_Unknown",
+            color = Color.white,
+            renderQueue = 3020
+        };
+        materialHazVolumetricoSol.SetTexture("_BaseMap", tex);
+        materialHazVolumetricoSol.SetTexture("_MainTex", tex);
+        materialHazVolumetricoSol.mainTexture = tex;
+        return materialHazVolumetricoSol;
+    }
+
+    private static Material ObtenerMaterialProyeccionSolPiso()
+    {
+        if (materialProyeccionSolPiso != null) return materialProyeccionSolPiso;
+
+        int w = 96, h = 96;
+        Texture2D tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
+        {
+            name = "Tex_ProyeccionVentanaPiso_Unknown",
+            wrapMode = TextureWrapMode.Clamp,
+            filterMode = FilterMode.Bilinear
+        };
+
+        for (int y = 0; y < h; y++)
+        {
+            float v = (float)y / (h - 1);
+            float ey = Mathf.Sin(v * Mathf.PI);
+            for (int x = 0; x < w; x++)
+            {
+                float u = (float)x / (w - 1);
+                float ex = Mathf.Sin(u * Mathf.PI);
+                // Cruz suave simulando la sombra del marco de la ventana proyectada por el sol sobre el suelo
+                float barroteV = Mathf.Abs(u - 0.5f) < 0.035f ? 0.35f : 1f;
+                float barroteH = Mathf.Abs(v - 0.5f) < 0.035f ? 0.42f : 1f;
+                float alfa = Mathf.Pow(ex * ey, 0.55f) * barroteV * barroteH * 0.24f;
+                tex.SetPixel(x, y, new Color(1.0f, 0.95f, 0.78f, alfa));
+            }
+        }
+        tex.Apply();
+
+        Shader sh = Shader.Find("Sprites/Default") ?? Shader.Find("Universal Render Pipeline/Unlit");
+        materialProyeccionSolPiso = new Material(sh)
+        {
+            name = "Mat_ProyeccionSolPiso_Unknown",
+            color = Color.white
+        };
+        materialProyeccionSolPiso.SetTexture("_BaseMap", tex);
+        materialProyeccionSolPiso.SetTexture("_MainTex", tex);
+        materialProyeccionSolPiso.mainTexture = tex;
+        return materialProyeccionSolPiso;
+    }
+
     private static void ConfigurarIluminacionDiaExteriorReal(Transform contenedorExtra, Bounds wb, Vector3 haciaAfuera)
     {
-        Vector3 haciaAdentro = -haciaAfuera.normalized;
+        Vector3 dirAfuera = haciaAfuera.normalized;
+        Vector3 haciaAdentro = -dirAfuera;
+        float anchoVentana = Mathf.Clamp(Mathf.Max(wb.size.x, wb.size.z), 0.85f, 3.2f);
+        float altoVentana = Mathf.Clamp(wb.size.y, 0.90f, 2.3f);
 
-        // 1. Luz Solar Exterior Real: ilumina el pasto, los arbustos, las flores, la cerca de madera y los árboles REALES afuera de la ventana
+        // 0. Arco Panorámico de Cielo Diurno afuera de la ventana (a ~4.5m detrás de los arbustos/flores reales, inmune a la niebla nocturna!)
+        Transform domoT = contenedorExtra.Find("Cielo_Panoramico_Dia_Unknown");
+        GameObject domoObj;
+        if (domoT == null)
+        {
+            domoObj = new GameObject("Cielo_Panoramico_Dia_Unknown");
+            domoObj.transform.SetParent(contenedorExtra, true);
+        }
+        else
+        {
+            domoObj = domoT.gameObject;
+        }
+        domoObj.transform.SetParent(null, true);
+        domoObj.transform.position = wb.center + dirAfuera * 0.35f;
+        domoObj.transform.rotation = Quaternion.LookRotation(dirAfuera, Vector3.up);
+        domoObj.transform.localScale = Vector3.one;
+        domoObj.transform.SetParent(contenedorExtra, true);
+
+        MeshFilter mfDomo = domoObj.GetComponent<MeshFilter>();
+        if (mfDomo == null) mfDomo = domoObj.AddComponent<MeshFilter>();
+        mfDomo.sharedMesh = ObtenerMallaArcoPanoramicoCielo();
+
+        MeshRenderer mrDomo = domoObj.GetComponent<MeshRenderer>();
+        if (mrDomo == null) mrDomo = domoObj.AddComponent<MeshRenderer>();
+        mrDomo.sharedMaterial = ObtenerMaterialDomoCieloPanoramicoDia();
+        mrDomo.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        mrDomo.receiveShadows = false;
+
+        // 1. Haces Volumétricos de Sol (God-Rays) entrando oblicuamente desde la ventana hacia la habitación oscura
+        Transform hacesT = contenedorExtra.Find("Haces_Volumetricos_Sol_Unknown");
+        if (hacesT != null)
+        {
+            if (Application.isPlaying) Destroy(hacesT.gameObject);
+            else DestroyImmediate(hacesT.gameObject);
+        }
+        GameObject hacesRoot = new GameObject("Haces_Volumetricos_Sol_Unknown");
+        hacesRoot.transform.position = wb.center + haciaAdentro * 0.04f;
+        hacesRoot.transform.rotation = Quaternion.LookRotation(haciaAdentro, Vector3.up);
+        hacesRoot.transform.localScale = Vector3.one;
+
+        Material matHaz = ObtenerMaterialHazVolumetricoSol();
+        float[] alturasRel = { 0.24f, 0.0f, -0.22f };
+        for (int h = 0; h < alturasRel.Length; h++)
+        {
+            GameObject qHaz = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            qHaz.name = "Rayo_Sol_" + h;
+            Collider cH = qHaz.GetComponent<Collider>();
+            if (cH != null) { if (Application.isPlaying) Destroy(cH); else DestroyImmediate(cH); }
+            qHaz.transform.SetParent(hacesRoot.transform, false);
+            // Inclinar el plano para que sea visible tanto de frente como de costado al entrar al cuarto
+            qHaz.transform.localPosition = new Vector3(0f, alturasRel[h] * altoVentana * 0.55f - 0.42f, 1.15f);
+            qHaz.transform.localRotation = Quaternion.Euler(62f + h * 6f, 0f, 0f);
+            qHaz.transform.localScale = new Vector3(anchoVentana * 0.94f, 2.45f, 1f);
+            MeshRenderer mrH = qHaz.GetComponent<MeshRenderer>();
+            if (mrH != null)
+            {
+                mrH.sharedMaterial = matHaz;
+                mrH.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                mrH.receiveShadows = false;
+            }
+        }
+
+        // Proyección dorada del marco de la ventana sobre el piso interior de madera
+        float pisoInteriorY = ObtenerAlturaPisoSegura(wb.center + haciaAdentro * 1.1f);
+        GameObject qPiso = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        qPiso.name = "Proyeccion_Sol_Piso_Unknown";
+        Collider cP = qPiso.GetComponent<Collider>();
+        if (cP != null) { if (Application.isPlaying) Destroy(cP); else DestroyImmediate(cP); }
+        qPiso.transform.position = new Vector3(wb.center.x, pisoInteriorY + 0.008f, wb.center.z) + haciaAdentro * 1.35f;
+        qPiso.transform.rotation = Quaternion.LookRotation(Vector3.down, haciaAdentro) * Quaternion.Euler(0f, 0f, 180f);
+        qPiso.transform.rotation = Quaternion.Euler(90f, Quaternion.LookRotation(haciaAdentro, Vector3.up).eulerAngles.y, 0f);
+        qPiso.transform.localScale = new Vector3(anchoVentana * 0.95f, 1.55f, 1f);
+        MeshRenderer mrPiso = qPiso.GetComponent<MeshRenderer>();
+        if (mrPiso != null)
+        {
+            mrPiso.sharedMaterial = ObtenerMaterialProyeccionSolPiso();
+            mrPiso.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mrPiso.receiveShadows = false;
+        }
+        qPiso.transform.SetParent(hacesRoot.transform, true);
+        hacesRoot.transform.SetParent(contenedorExtra, true);
+
+        // 2. Luz Solar Exterior Real: ilumina el pasto, los arbustos, las flores y la cerca REALES justo afuera de esa ventana
         Transform solExtT = contenedorExtra.Find("Sol_Jardin_Exterior_Unknown");
         Light solExt = solExtT != null ? solExtT.GetComponent<Light>() : null;
         if (solExt == null)
@@ -1836,19 +2191,19 @@ public class ObjetoAnomalia : MonoBehaviour
             obj.transform.SetParent(contenedorExtra, true);
             solExt = obj.AddComponent<Light>();
         }
-        solExt.transform.position = wb.center + haciaAfuera * 1.2f + Vector3.up * 3.2f;
-        solExt.transform.rotation = Quaternion.LookRotation((haciaAfuera + Vector3.down * 0.55f).normalized, Vector3.up);
+        solExt.transform.position = wb.center + dirAfuera * 1.1f + Vector3.up * 2.8f;
+        solExt.transform.rotation = Quaternion.LookRotation((dirAfuera + Vector3.down * 0.55f).normalized, Vector3.up);
         solExt.type = LightType.Spot;
-        solExt.spotAngle = 155f;
-        solExt.innerSpotAngle = 95f;
-        solExt.color = new Color(1.0f, 0.97f, 0.88f, 1f);
-        solExt.intensity = 9.5f;
-        solExt.range = 24f;
+        solExt.spotAngle = 152f;
+        solExt.innerSpotAngle = 92f;
+        solExt.color = new Color(1.0f, 0.96f, 0.85f, 1f);
+        solExt.intensity = 7.8f;
+        solExt.range = 14f;
         solExt.shadows = LightShadows.None;
         solExt.renderMode = LightRenderMode.ForcePixel;
         solExt.enabled = true;
 
-        // 2. Luz Celeste de Cielo Diurno Exterior: baña el jardín exterior con luz azul de día para eliminar las sombras negras nocturnas afuera
+        // 3. Luz Celeste de Cielo Diurno Exterior: baña los arbustos cercanos con relleno celeste diurno
         Transform cieloExtT = contenedorExtra.Find("Cielo_Exterior_Relleno_Unknown");
         Light cieloExt = cieloExtT != null ? cieloExtT.GetComponent<Light>() : null;
         if (cieloExt == null)
@@ -1857,16 +2212,16 @@ public class ObjetoAnomalia : MonoBehaviour
             obj.transform.SetParent(contenedorExtra, true);
             cieloExt = obj.AddComponent<Light>();
         }
-        cieloExt.transform.position = wb.center + haciaAfuera * 4.2f + Vector3.up * 1.8f;
+        cieloExt.transform.position = wb.center + dirAfuera * 2.4f + Vector3.up * 1.4f;
         cieloExt.type = LightType.Point;
-        cieloExt.color = new Color(0.68f, 0.86f, 1.0f, 1f);
-        cieloExt.intensity = 4.2f;
-        cieloExt.range = 20f;
+        cieloExt.color = new Color(0.72f, 0.88f, 1.0f, 1f);
+        cieloExt.intensity = 3.6f;
+        cieloExt.range = 10f;
         cieloExt.shadows = LightShadows.None;
         cieloExt.renderMode = LightRenderMode.ForcePixel;
         cieloExt.enabled = true;
 
-        // 3. Haz de Sol Entrando al Cuarto por ESA ventana (ilumina el sofá/cama y el piso de madera adentro del cuarto)
+        // 4. Haz de Sol Entrando al Cuarto por ESA ventana (ilumina el sofá/cama y el piso de madera adentro del cuarto)
         Transform luzSolT = contenedorExtra.Find("Luz_Sol_Ventana_Unknown");
         Light luzSol = luzSolT != null ? luzSolT.GetComponent<Light>() : null;
         if (luzSol == null)
@@ -1875,15 +2230,15 @@ public class ObjetoAnomalia : MonoBehaviour
             lObj.transform.SetParent(contenedorExtra, true);
             luzSol = lObj.AddComponent<Light>();
         }
-        Vector3 dirRayoSol = (haciaAdentro + Vector3.down * 0.40f).normalized;
-        luzSol.transform.position = wb.center + haciaAfuera * 1.25f + Vector3.up * 0.45f;
+        Vector3 dirRayoSol = (haciaAdentro + Vector3.down * 0.42f).normalized;
+        luzSol.transform.position = wb.center + dirAfuera * 1.15f + Vector3.up * 0.50f;
         luzSol.transform.rotation = Quaternion.LookRotation(dirRayoSol, Vector3.up);
         luzSol.type = LightType.Spot;
-        luzSol.spotAngle = 72f;
-        luzSol.innerSpotAngle = 42f;
-        luzSol.color = new Color(1.0f, 0.95f, 0.82f, 1f);
-        luzSol.intensity = 5.5f;
-        luzSol.range = 8.5f;
+        luzSol.spotAngle = 76f;
+        luzSol.innerSpotAngle = 44f;
+        luzSol.color = new Color(1.0f, 0.94f, 0.78f, 1f);
+        luzSol.intensity = 6.2f;
+        luzSol.range = 8.8f;
         luzSol.shadows = LightShadows.None;
         luzSol.renderMode = LightRenderMode.ForcePixel;
         luzSol.enabled = true;
@@ -2010,6 +2365,85 @@ public class ObjetoAnomalia : MonoBehaviour
             transform.position = posBaseLevitacion + new Vector3(0f, flotar, 0f);
             transform.Rotate(new Vector3(12f, 24f, 8f) * Time.deltaTime, Space.World);
         }
+
+        if (estaActiva && tipoActivoActual == TipoAnomalia.Preacher && varianteActual != null && varianteActual.audioEvento != null)
+        {
+            ActualizarAtenuacionEspacialPreacher(varianteActual.audioEvento);
+        }
+    }
+
+    public static void ConfigurarAudioEspacialPreacher(AudioSource aud)
+    {
+        if (aud == null) return;
+        aud.playOnAwake = false;
+        aud.spatialBlend = 1.0f;
+        aud.dopplerLevel = 0f;
+        aud.spread = 20f;
+        aud.minDistance = 0.45f;
+        aud.maxDistance = 5.4f;
+        aud.rolloffMode = AudioRolloffMode.Custom;
+        AnimationCurve curva = new AnimationCurve(
+            new Keyframe(0.00f, 1.00f),
+            new Keyframe(0.18f, 0.58f),
+            new Keyframe(0.45f, 0.22f),
+            new Keyframe(0.75f, 0.06f),
+            new Keyframe(1.00f, 0.00f)
+        );
+        aud.SetCustomCurve(AudioSourceCurveType.CustomRolloff, curva);
+        aud.loop = true;
+    }
+
+    private void ActualizarAtenuacionEspacialPreacher(AudioSource aud)
+    {
+        if (VRPauseMenu.IsMenuOpen || FinalTurnoVR.EstaEnSecuenciaFinal)
+        {
+            aud.volume = 0f;
+            return;
+        }
+
+        Camera cam = Camera.main;
+        if (cam == null)
+        {
+            aud.volume = 0.12f;
+            return;
+        }
+
+        Vector3 posCam = cam.transform.position;
+        Vector3 posPreacher = ObtenerPosicionVisualActiva();
+
+        // Si el jugador está en otro piso (ej. Sala en Piso 1 y Preacher en Recámara 3 en Piso 2), silencio total (0.0f)
+        bool mismoPiso = (posCam.y >= 3.15f) == (posPreacher.y >= 3.15f);
+        if (!mismoPiso || Mathf.Abs(posCam.y - posPreacher.y) > 2.25f)
+        {
+            aud.volume = Mathf.MoveTowards(aud.volume, 0f, Time.deltaTime * 1.2f);
+            return;
+        }
+
+        float dist = Vector3.Distance(posCam, posPreacher);
+        const float rangoMaxEscucha = 5.2f;
+        if (dist >= rangoMaxEscucha)
+        {
+            aud.volume = Mathf.MoveTowards(aud.volume, 0f, Time.deltaTime * 1.2f);
+            return;
+        }
+
+        // Sube gradualmente conforme te acercas al clóset, pero siempre a niveles bajos y sutiles (máx. 0.22f pegado a él)
+        float cercania = Mathf.Clamp01(1f - (dist / rangoMaxEscucha));
+        float volObjetivo = Mathf.Pow(cercania, 1.65f) * 0.22f;
+
+        // Si hay muros o puertas cerradas de por medio entre el jugador y el clóset, amortiguar fuertemente
+        string cuartoJugador = NormalizarCuartoPorPosicion(posCam, "LivingRoom");
+        bool mismoCuarto = string.Equals(cuartoJugador, nombreCuarto, System.StringComparison.OrdinalIgnoreCase);
+        if (!mismoCuarto)
+        {
+            volObjetivo *= 0.22f;
+        }
+        else if (!InteractorUniversalVR.TieneLineaDeVisionDirecta(posCam, posPreacher + Vector3.up * 0.4f, transform))
+        {
+            volObjetivo *= 0.48f;
+        }
+
+        aud.volume = Mathf.MoveTowards(aud.volume, volObjetivo, Time.deltaTime * 0.65f);
     }
 
     private void ActivarInteractivosMuebleOElectronicoSiCorresponde()
@@ -2281,7 +2715,31 @@ public class ObjetoAnomalia : MonoBehaviour
         }
 
         if (v.audioEvento != null && v.audioEvento.isPlaying)
-            v.audioEvento.Stop();
+        {
+            if (gameObject.activeInHierarchy)
+                StartCoroutine(RutinaDesvanecerAudioEvento(v.audioEvento, 0.22f));
+            else
+                v.audioEvento.Stop();
+        }
+    }
+
+    private static System.Collections.IEnumerator RutinaDesvanecerAudioEvento(AudioSource src, float duracion)
+    {
+        if (src == null || !src.isPlaying) yield break;
+        float v0 = src.volume;
+        float t = 0f;
+        while (t < duracion && src != null && src.isPlaying)
+        {
+            t += Time.deltaTime;
+            float p = Mathf.Clamp01(t / duracion);
+            src.volume = v0 * (0.5f * (1f + Mathf.Cos(p * Mathf.PI)));
+            yield return null;
+        }
+        if (src != null)
+        {
+            src.Stop();
+            src.volume = v0;
+        }
     }
 
     private static Material ObtenerMaterialElectricoFallback()
@@ -2333,6 +2791,10 @@ public class ObjetoAnomalia : MonoBehaviour
 
     private static AudioClip ObtenerClipZumbidoElectrico()
     {
+#if UNITY_EDITOR
+        if (clipZumbidoElectrico == null)
+            clipZumbidoElectrico = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/yourugor-tv-static-noise-291374.mp3");
+#endif
         if (clipZumbidoElectrico == null)
         {
             int sampleRate = 22050;
@@ -2353,6 +2815,10 @@ public class ObjetoAnomalia : MonoBehaviour
 
     private static AudioClip ObtenerClipSusurrosPreacher()
     {
+#if UNITY_EDITOR
+        if (clipSusurrosPreacher == null)
+            clipSusurrosPreacher = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_preacher_original.wav");
+#endif
         if (clipSusurrosPreacher == null)
         {
             int sampleRate = 22050;

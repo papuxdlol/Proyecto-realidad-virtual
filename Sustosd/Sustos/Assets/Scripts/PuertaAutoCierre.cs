@@ -371,7 +371,7 @@ public class PuertaAutoCierre : MonoBehaviour
 
         if (audioPuerta != null && sonidoAbrir != null)
         {
-            audioPuerta.Stop();
+            audioPuerta.volume = 0.85f;
             audioPuerta.pitch = Random.Range(0.95f, 1.04f);
             audioPuerta.PlayOneShot(sonidoAbrir);
         }
@@ -397,7 +397,7 @@ public class PuertaAutoCierre : MonoBehaviour
             AudioClip clipAnomalo = sonidoAbrirAnomalia != null ? sonidoAbrirAnomalia : sonidoAbrir;
             if (clipAnomalo != null)
             {
-                audioPuerta.Stop();
+                audioPuerta.volume = 0.82f;
                 audioPuerta.pitch = 0.92f;
                 audioPuerta.PlayOneShot(clipAnomalo);
             }
@@ -551,7 +551,7 @@ public class PuertaAutoCierre : MonoBehaviour
         AudioClip clip = sonidoCerrar != null ? sonidoCerrar : sonidoAbrir;
         if (clip != null)
         {
-            audioPuerta.Stop();
+            audioPuerta.volume = 0.85f;
             audioPuerta.pitch = Random.Range(0.96f, 1.04f);
             audioPuerta.PlayOneShot(clip);
         }

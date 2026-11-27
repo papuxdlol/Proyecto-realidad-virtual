@@ -12,6 +12,7 @@ public class CajaFusiblesVR : MonoBehaviour
     public Transform palancaVisual;
     public Light luzIndicadora;
     public AudioSource sonidoPalanca;
+    public AudioClip clipFuseBoxReal;
 
     [Header("Estado de Energía General")]
     public bool energiaGeneralActiva = true;
@@ -58,8 +59,9 @@ public class CajaFusiblesVR : MonoBehaviour
 
         sonidoPalanca.playOnAwake = false;
         sonidoPalanca.spatialBlend = 1f;
-        if (sonidoPalanca.clip == null)
-            sonidoPalanca.clip = ObtenerClipPalanca();
+        AudioClip mejorClip = ObtenerClipPalanca();
+        if (mejorClip != null)
+            sonidoPalanca.clip = mejorClip;
 
         BoxCollider bc = GetComponent<BoxCollider>();
         if (bc == null)
@@ -165,8 +167,11 @@ public class CajaFusiblesVR : MonoBehaviour
         ultimaInteraccionFrame = Time.frameCount;
         ultimoTiempoInteraccion = Time.unscaledTime;
 
-        if (sonidoPalanca != null && sonidoPalanca.clip != null)
-            sonidoPalanca.PlayOneShot(sonidoPalanca.clip);
+        if (sonidoPalanca != null)
+        {
+            AudioClip c = clipFuseBoxReal != null ? clipFuseBoxReal : sonidoPalanca.clip;
+            if (c != null) sonidoPalanca.PlayOneShot(c, 0.90f);
+        }
 
         if (interactor is XRBaseInputInteractor inputInteractor)
             inputInteractor.SendHapticImpulse(0.75f, 0.2f);
@@ -216,8 +221,19 @@ public class CajaFusiblesVR : MonoBehaviour
         rutinaConmutacion = null;
     }
 
-    private static AudioClip ObtenerClipPalanca()
+    private AudioClip ObtenerClipPalanca()
     {
+        if (clipFuseBoxReal != null)
+            return clipFuseBoxReal;
+
+#if UNITY_EDITOR
+        AudioClip realEd = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-fuse-box-klick-106954.mp3");
+        if (realEd != null)
+        {
+            clipFuseBoxReal = realEd;
+            return realEd;
+        }
+#endif
         if (clipPalancaProcedural == null)
         {
             int sampleRate = 22050;

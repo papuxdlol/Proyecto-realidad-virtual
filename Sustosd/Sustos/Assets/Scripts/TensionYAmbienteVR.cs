@@ -15,6 +15,9 @@ public class TensionYAmbienteVR : MonoBehaviour
 
     [Header("Audios de Tensión y Paranoia Ambiental")]
     public AudioClip clipLatidoCorazon;
+    public AudioClip clipVocesSusurros;
+    public AudioClip clipTicTacHoraMuerta;
+    public AudioClip clipSonido3AM;
     public AudioClip clipVientoVentana;
     public AudioClip clipCrujidoMadera;
     public AudioClip clipGolpeMadera;
@@ -22,12 +25,19 @@ public class TensionYAmbienteVR : MonoBehaviour
     [Header("Parámetros de Tensión")]
     public float segundosMirandoParaReaccion = 4.0f;
     public float distanciaMaximaMirada = 4.8f;
-    public float distanciaInterferenciaTablet = 2.8f;
+    public float distanciaInterferenciaTablet = 3.1f;
     public int maxFalsosPositivosPorNoche = 2;
 
     private AudioSource fuenteLatido;
+    private AudioSource fuenteSusurros;
+    private AudioSource fuenteTicTac3AM;
+    private AudioSource fuenteEvento3AM;
     private AudioSource fuenteParanoia3D;
     private GameObject nodoAudioParanoia;
+    private GameObject nodoAudioSusurros3D;
+    private bool hayEntidadCercanaParaSusurros = false;
+    private float proximoChequeoSusurro = -1f;
+    private Coroutine rutinaSusurroAleatorio;
 
     private float temporizadorEscaneo = 0f;
     private float proximoLatido = 0f;
@@ -75,8 +85,32 @@ public class TensionYAmbienteVR : MonoBehaviour
 
         fuenteLatido = gameObject.AddComponent<AudioSource>();
         fuenteLatido.playOnAwake = false;
-        fuenteLatido.spatialBlend = 0f; // 2D interno (latido del propio jugador)
-        fuenteLatido.volume = 0.5f;
+        fuenteLatido.spatialBlend = 0f; // 2D interno (latido del propio jugador a volumen bajo)
+        fuenteLatido.loop = true;
+        fuenteLatido.volume = 0f;
+
+        nodoAudioSusurros3D = new GameObject("Emisor_Susurros_Aleatorios_VR");
+        nodoAudioSusurros3D.transform.SetParent(transform, false);
+        fuenteSusurros = nodoAudioSusurros3D.AddComponent<AudioSource>();
+        fuenteSusurros.playOnAwake = false;
+        fuenteSusurros.spatialBlend = 0.68f;
+        fuenteSusurros.rolloffMode = AudioRolloffMode.Linear;
+        fuenteSusurros.minDistance = 1.2f;
+        fuenteSusurros.maxDistance = 12f;
+        fuenteSusurros.loop = false;
+        fuenteSusurros.volume = 0f;
+
+        fuenteTicTac3AM = gameObject.AddComponent<AudioSource>();
+        fuenteTicTac3AM.playOnAwake = false;
+        fuenteTicTac3AM.spatialBlend = 0f;
+        fuenteTicTac3AM.loop = true;
+        fuenteTicTac3AM.volume = 0f;
+
+        fuenteEvento3AM = gameObject.AddComponent<AudioSource>();
+        fuenteEvento3AM.playOnAwake = false;
+        fuenteEvento3AM.spatialBlend = 0f;
+        fuenteEvento3AM.loop = false;
+        fuenteEvento3AM.volume = 0f;
 
         nodoAudioParanoia = new GameObject("Emisor_Paranoia_Ambiental_VR");
         nodoAudioParanoia.transform.SetParent(transform, false);
@@ -87,6 +121,16 @@ public class TensionYAmbienteVR : MonoBehaviour
         fuenteParanoia3D.minDistance = 1.5f;
         fuenteParanoia3D.maxDistance = 18f;
 
+#if UNITY_EDITOR
+        if (clipLatidoCorazon == null)
+            clipLatidoCorazon = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/heartbeat-fx.mp3");
+        if (clipVocesSusurros == null)
+            clipVocesSusurros = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/whispering-voices-background.mp3");
+        if (clipTicTacHoraMuerta == null)
+            clipTicTacHoraMuerta = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/tic-tac-emilly.mp3");
+        if (clipSonido3AM == null)
+            clipSonido3AM = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/homarov-hell-sounds-12417.mp3");
+#endif
         if (clipLatidoCorazon == null)
             clipLatidoCorazon = CrearLatidoProcedural();
     }
@@ -96,6 +140,7 @@ public class TensionYAmbienteVR : MonoBehaviour
         cachePuertas = FindObjectsByType<PuertaAutoCierre>(FindObjectsInactive.Include);
         cacheSwitches = FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include);
         proximoFalsoPositivo = Time.time + Random.Range(48f, 88f);
+        proximoChequeoSusurro = Time.time + Random.Range(38f, 75f);
     }
 
     void OnDestroy()
@@ -106,16 +151,28 @@ public class TensionYAmbienteVR : MonoBehaviour
 
     void Update()
     {
-        if (VRPauseMenu.IsMenuOpen || FinalTurnoVR.EstaEnSecuenciaFinal) return;
+        if (VRPauseMenu.IsMenuOpen || FinalTurnoVR.EstaEnSecuenciaFinal)
+        {
+            if (fuenteLatido != null && fuenteLatido.isPlaying) fuenteLatido.Pause();
+            if (fuenteSusurros != null && fuenteSusurros.isPlaying) fuenteSusurros.Pause();
+            return;
+        }
 
         TabletSistemaVR tablet = TabletSistemaVR.Instancia;
         if (tablet == null || tablet.EstaEnInspeccion || tablet.HoraActual >= 6)
+        {
+            if (fuenteLatido != null && fuenteLatido.isPlaying) fuenteLatido.Stop();
+            if (fuenteSusurros != null && fuenteSusurros.isPlaying) fuenteSusurros.Stop();
             return;
+        }
 
         int activas = tablet.ContarAnomaliasActivas();
 
-        // 1. Idea 8: Latido + pulso háptico progresivo cuando hay 3 o más anomalías activas
+        // 1. Idea 8: Latido (heartbeat-fx a volumen bajo) + pulso háptico progresivo cuando hay 3 o más anomalías activas
         ActualizarLatidoYTensionCritica(activas, tablet);
+
+        // 1b. Susurros como evento aleatorio esporádico de baja probabilidad (no en bucle continuo)
+        EvaluarEventoSusurrosAleatorios(activas);
 
         // 2. Escaneo ligero cada 0.15 s (cero carga en Meta Quest 2) para Ideas 7b y 9
         temporizadorEscaneo += Time.deltaTime;
@@ -132,20 +189,100 @@ public class TensionYAmbienteVR : MonoBehaviour
 
     private void ActualizarLatidoYTensionCritica(int activas, TabletSistemaVR tablet)
     {
-        if (activas < 3 || clipLatidoCorazon == null) return;
+        if (fuenteLatido == null || clipLatidoCorazon == null) return;
+
+        if (activas < 3)
+        {
+            if (fuenteLatido.isPlaying)
+            {
+                fuenteLatido.volume = Mathf.MoveTowards(fuenteLatido.volume, 0f, Time.deltaTime * 0.35f);
+                if (fuenteLatido.volume <= 0.002f)
+                    fuenteLatido.Stop();
+            }
+            return;
+        }
+
+        bool nivelCritico = activas >= 4;
+        // Volumen bajo como pidió el usuario para que acompañe la tensión sin aturdir
+        float volObjetivo = nivelCritico ? 0.21f : 0.12f;
+        fuenteLatido.clip = clipLatidoCorazon;
+        fuenteLatido.loop = true;
+        fuenteLatido.pitch = nivelCritico ? 1.08f : 0.96f;
+        if (!fuenteLatido.isPlaying)
+            fuenteLatido.Play();
+        fuenteLatido.volume = Mathf.MoveTowards(fuenteLatido.volume, volObjetivo, Time.deltaTime * 0.25f);
 
         if (Time.time >= proximoLatido)
         {
-            bool nivelCritico = activas >= 4;
-            float intervalo = nivelCritico ? 0.78f : 1.18f;
-            float volumen = nivelCritico ? 0.62f : 0.36f;
-            float haptica = nivelCritico ? 0.24f : 0.12f;
-
-            proximoLatido = Time.time + intervalo;
-            fuenteLatido.pitch = nivelCritico ? 1.12f : 0.96f;
-            fuenteLatido.PlayOneShot(clipLatidoCorazon, volumen);
-            tablet.EnviarHapticAmbosMandos(haptica, 0.08f);
+            proximoLatido = Time.time + (nivelCritico ? 0.82f : 1.18f);
+            tablet.EnviarHapticAmbosMandos(nivelCritico ? 0.20f : 0.10f, 0.07f);
         }
+    }
+
+    private void EvaluarEventoSusurrosAleatorios(int activas)
+    {
+        if (fuenteSusurros == null || clipVocesSusurros == null) return;
+        if (rutinaSusurroAleatorio != null || fuenteSusurros.isPlaying) return;
+        if (Time.time < proximoChequeoSusurro) return;
+
+        // Evaluar cada 12-16s con baja probabilidad (9% normal, 15% con anomalía activa, 24% cerca de entidad humanoide)
+        proximoChequeoSusurro = Time.time + Random.Range(12f, 16f);
+
+        float probabilidad = hayEntidadCercanaParaSusurros ? 0.24f : (activas > 0 ? 0.15f : 0.09f);
+        if (Random.value > probabilidad) return;
+
+        // Al activarse un susurro, aplicar cooldown largo (58s a 105s) para que sea raro, impredecible y escalofriante
+        proximoChequeoSusurro = Time.time + Random.Range(58f, 105f);
+        rutinaSusurroAleatorio = StartCoroutine(RutinaEventoSusurroAleatorio());
+    }
+
+    private IEnumerator RutinaEventoSusurroAleatorio()
+    {
+        if (Camera.main != null && nodoAudioSusurros3D != null)
+        {
+            Transform camT = Camera.main.transform;
+            float anguloLateralTrasero = (Random.value < 0.5f ? -1f : 1f) * Random.Range(75f, 145f);
+            Vector3 dir = Quaternion.Euler(0f, anguloLateralTrasero, 0f) * new Vector3(camT.forward.x, 0f, camT.forward.z).normalized;
+            if (dir.sqrMagnitude < 0.01f) dir = Vector3.back;
+            nodoAudioSusurros3D.transform.position = camT.position + dir * Random.Range(3.2f, 5.4f);
+        }
+
+        fuenteSusurros.clip = clipVocesSusurros;
+        fuenteSusurros.loop = false;
+        fuenteSusurros.pitch = Random.Range(0.92f, 1.04f);
+        float maxInicio = Mathf.Max(0f, clipVocesSusurros.length - 6.2f);
+        fuenteSusurros.time = maxInicio > 0.2f ? Random.Range(0.2f, maxInicio) : 0f;
+        fuenteSusurros.volume = 0f;
+        fuenteSusurros.Play();
+
+        float volPico = hayEntidadCercanaParaSusurros ? 0.115f : 0.088f;
+        const float fadeIn = 1.25f;
+        float sosten = Random.Range(1.5f, 2.5f);
+        const float fadeOut = 1.65f;
+
+        float t = 0f;
+        while (t < fadeIn && fuenteSusurros != null)
+        {
+            t += Time.deltaTime;
+            float p = Mathf.Clamp01(t / fadeIn);
+            fuenteSusurros.volume = volPico * (0.5f * (1f - Mathf.Cos(p * Mathf.PI)));
+            yield return null;
+        }
+
+        yield return new WaitForSeconds(sosten);
+
+        t = 0f;
+        while (t < fadeOut && fuenteSusurros != null && fuenteSusurros.isPlaying)
+        {
+            t += Time.deltaTime;
+            float p = Mathf.Clamp01(t / fadeOut);
+            fuenteSusurros.volume = volPico * (0.5f * (1f + Mathf.Cos(p * Mathf.PI)));
+            yield return null;
+        }
+
+        if (fuenteSusurros != null && fuenteSusurros.isPlaying)
+            fuenteSusurros.Stop();
+        rutinaSusurroAleatorio = null;
     }
 
     private void EvaluarCercaniaYMiradaAAnomalias(TabletSistemaVR tablet, float dt)
@@ -159,6 +296,7 @@ public class TensionYAmbienteVR : MonoBehaviour
         ObjetoAnomalia entidadVista = null;
         float mejorDistMirada = distanciaMaximaMirada;
         bool hayInterferenciaCercana = false;
+        hayEntidadCercanaParaSusurros = false;
 
         List<ObjetoAnomalia> lista = tablet.todasLasAnomalias;
         for (int i = 0; i < lista.Count; i++)
@@ -172,15 +310,12 @@ public class TensionYAmbienteVR : MonoBehaviour
 
             float dist = Vector3.Distance(posCam, posAnom);
 
-            // Idea 9: Interferencia en la Tablet cerca de entidades o fallos eléctricos
-            bool causaInterferencia =
-                a.tipoActivoActual == TipoAnomalia.Flawed ||
-                a.tipoActivoActual == TipoAnomalia.PureForm ||
-                a.tipoActivoActual == TipoAnomalia.Preacher ||
-                a.tipoActivoActual == TipoAnomalia.Tulpa ||
-                a.tipoActivoActual == TipoAnomalia.Electrical;
+            // Interferencia (glitchstarting) en la Tablet específicamente al acercarse a una anomalía HUMANOIDE
+            bool esHumanoide = TabletSistemaVR.EsEntidadHumanoide(a.tipoActivoActual);
+            if (esHumanoide && dist <= 5.5f)
+                hayEntidadCercanaParaSusurros = true;
 
-            if (causaInterferencia && dist <= distanciaInterferenciaTablet)
+            if (esHumanoide && dist <= distanciaInterferenciaTablet)
                 hayInterferenciaCercana = true;
 
             // Idea 7b: Mirar fijamente a una entidad humanoide de cerca
@@ -343,11 +478,23 @@ public class TensionYAmbienteVR : MonoBehaviour
     {
         InterruptorLuz.EnEventoHoraMuerta3AM = true;
 
-        if (clipZumbido3AM == null)
-            clipZumbido3AM = CrearZumbidoCaidaVoltaje3AM();
+        AudioClip clip3am = clipSonido3AM != null ? clipSonido3AM : (clipZumbido3AM ?? (clipZumbido3AM = CrearZumbidoCaidaVoltaje3AM()));
+        if (fuenteEvento3AM != null && clip3am != null)
+        {
+            fuenteEvento3AM.Stop();
+            fuenteEvento3AM.clip = clip3am;
+            fuenteEvento3AM.time = 0f;
+            fuenteEvento3AM.volume = 0f;
+            fuenteEvento3AM.Play();
+        }
 
-        if (fuenteLatido != null && clipZumbido3AM != null)
-            fuenteLatido.PlayOneShot(clipZumbido3AM, 0.55f);
+        if (fuenteTicTac3AM != null && clipTicTacHoraMuerta != null)
+        {
+            fuenteTicTac3AM.clip = clipTicTacHoraMuerta;
+            fuenteTicTac3AM.pitch = 0.76f;
+            fuenteTicTac3AM.volume = 0.12f;
+            fuenteTicTac3AM.Play();
+        }
 
         if (TabletSistemaVR.Instancia != null)
         {
@@ -355,23 +502,41 @@ public class TensionYAmbienteVR : MonoBehaviour
             TabletSistemaVR.Instancia.ActivarGlitchVisual(0.55f);
         }
 
-        float duracion = 6.5f;
+        float duracion = 8.5f;
         float t = 0f;
         while (t < duracion)
         {
             t += Time.deltaTime;
             float p = t / duracion;
-            // Curva de caída a ~25% con ligero temblor de filamento y recuperación gradual al final
-            float baseCurva = p < 0.15f
-                ? Mathf.Lerp(1.0f, 0.25f, p / 0.15f)
-                : (p < 0.78f ? 0.25f : Mathf.Lerp(0.25f, 1.0f, (p - 0.78f) / 0.22f));
+            float baseCurva = p < 0.14f
+                ? Mathf.Lerp(1.0f, 0.25f, p / 0.14f)
+                : (p < 0.76f ? 0.25f : Mathf.Lerp(0.25f, 1.0f, (p - 0.76f) / 0.24f));
             float fluctuacion = Mathf.Sin(t * 24f) * 0.04f + Mathf.Cos(t * 11f) * 0.03f;
             InterruptorLuz.FactorVoltajeGlobal = Mathf.Clamp(baseCurva + fluctuacion, 0.18f, 1.0f);
+
+            if (fuenteEvento3AM != null && fuenteEvento3AM.isPlaying)
+            {
+                float volHell = p < 0.15f
+                    ? Mathf.Lerp(0f, 0.44f, p / 0.15f)
+                    : (p < 0.72f ? 0.44f : Mathf.Lerp(0.44f, 0f, (p - 0.72f) / 0.28f));
+                fuenteEvento3AM.volume = volHell;
+            }
+            if (fuenteTicTac3AM != null && fuenteTicTac3AM.isPlaying)
+            {
+                float volTic = p < 0.12f
+                    ? Mathf.Lerp(0f, 0.12f, p / 0.12f)
+                    : (p < 0.74f ? 0.12f : Mathf.Lerp(0.12f, 0f, (p - 0.74f) / 0.26f));
+                fuenteTicTac3AM.volume = volTic;
+            }
             yield return null;
         }
 
         InterruptorLuz.FactorVoltajeGlobal = 1.0f;
         InterruptorLuz.EnEventoHoraMuerta3AM = false;
+        if (fuenteEvento3AM != null && fuenteEvento3AM.isPlaying)
+            fuenteEvento3AM.Stop();
+        if (fuenteTicTac3AM != null && fuenteTicTac3AM.isPlaying)
+            fuenteTicTac3AM.Stop();
 
         if (cacheSwitches != null)
         {
@@ -510,14 +675,22 @@ public class TensionYAmbienteVR : MonoBehaviour
         }
         else if (clipGolpeMadera != null)
         {
-            // Golpe sordo / paso aislado en madera arriba
+            // Paso aislado en madera arriba con decaimiento cosenoidal suave (nunca parado en seco)
             fuenteParanoia3D.clip = clipGolpeMadera;
             fuenteParanoia3D.pitch = Random.Range(0.70f, 0.80f);
             fuenteParanoia3D.time = 0f;
-            fuenteParanoia3D.volume = 0.32f;
+            fuenteParanoia3D.volume = 0.30f;
             fuenteParanoia3D.Play();
-            yield return new WaitForSeconds(0.38f);
-            fuenteParanoia3D.Stop();
+            yield return new WaitForSeconds(0.28f);
+            float tFade = 0f;
+            while (tFade < 0.32f && fuenteParanoia3D != null && fuenteParanoia3D.isPlaying)
+            {
+                tFade += Time.deltaTime;
+                float p = Mathf.Clamp01(tFade / 0.32f);
+                fuenteParanoia3D.volume = 0.30f * (0.5f * (1f + Mathf.Cos(p * Mathf.PI)));
+                yield return null;
+            }
+            if (fuenteParanoia3D != null) fuenteParanoia3D.Stop();
         }
 
         rutinaAudioParanoia = null;

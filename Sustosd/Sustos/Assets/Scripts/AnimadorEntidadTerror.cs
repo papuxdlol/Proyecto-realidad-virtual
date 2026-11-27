@@ -43,6 +43,7 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
     private float semillaAleatoria;
     private float tiempoMiradoAcecho;
     private float factorRetraccionAcecho;
+    private Renderer[] renderersCuerpoCache;
 
     private static readonly string[] EstadosFlawedPie =
     {
@@ -148,6 +149,8 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         animadorActivo.applyRootMotion = false;
         animadorActivo.cullingMode = AnimatorCullingMode.AlwaysAnimate;
         animadorActivo.speed = Random.Range(0.94f, 1.05f);
+        animadorActivo.transform.localPosition = new Vector3(animadorActivo.transform.localPosition.x, 0f, animadorActivo.transform.localPosition.z);
+        renderersCuerpoCache = animadorActivo.GetComponentsInChildren<Renderer>(false);
 
         // Configurar Animation Rigging (MultiAimConstraint sobre la cabeza hacia la cámara VR del jugador)
         bool usarAimRig = (tipoEntidad == TipoAnomalia.Flawed && !modoFlawedEspaldas) ||
@@ -497,6 +500,48 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         else
         {
             transform.localRotation = rotBaseLocal * (enEspasmo ? rotEspasmo : Quaternion.identity);
+        }
+    }
+
+    private void LateUpdate()
+    {
+        // Guardia anti-clipping en tiempo real tras evaluar Animator + Rigging:
+        // Garantiza al 100% que NINGUNA entidad (ej. Flawed en Recámara 3 sobre la Cocina, PureForm, Preacher o Tulpa)
+        // hunda los pies o piernas por debajo de la losa del piso hacia el techo del cuarto inferior.
+        if (tipoEntidad == TipoAnomalia.Corpse || animadorActivo == null) return;
+        if (transform.parent == null) return;
+
+        if (renderersCuerpoCache == null || renderersCuerpoCache.Length == 0)
+            renderersCuerpoCache = animadorActivo.GetComponentsInChildren<Renderer>(false);
+        if (renderersCuerpoCache == null || renderersCuerpoCache.Length == 0) return;
+
+        float minY = float.MaxValue;
+        for (int i = 0; i < renderersCuerpoCache.Length; i++)
+        {
+            Renderer r = renderersCuerpoCache[i];
+            if (r == null || !r.enabled || !r.gameObject.activeInHierarchy) continue;
+            if (r.gameObject.name.Contains("Halo")) continue;
+            float ry = r.bounds.min.y;
+            if (ry < minY) minY = ry;
+        }
+        if (minY >= float.MaxValue * 0.5f) return;
+
+        float pisoY = transform.parent.position.y;
+        // En Piso 2 la losa del piso está en Y=3.732 (techo de Cocina en Y=3.408): jamás permitir bajar de 3.74f
+        if (pisoY > 3.15f && pisoY < 3.74f)
+            pisoY = 3.74f;
+
+        float margenMinimo = pisoY + 0.006f;
+        if (minY < margenMinimo)
+        {
+            float subir = margenMinimo - minY;
+            animadorActivo.transform.position += new Vector3(0f, subir, 0f);
+        }
+        else if (!enSecuenciaSitToStand && minY > pisoY + 0.08f)
+        {
+            // Evitar también que quede flotando en el aire si algún clip sube el centro de masa
+            float bajar = minY - (pisoY + 0.01f);
+            animadorActivo.transform.position -= new Vector3(0f, bajar, 0f);
         }
     }
 }

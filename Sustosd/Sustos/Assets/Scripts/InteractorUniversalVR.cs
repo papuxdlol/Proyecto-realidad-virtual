@@ -114,16 +114,35 @@ public class InteractorUniversalVR : MonoBehaviour
     {
         Vector3 dir = destino - origen;
         float dist = dir.magnitude;
-        if (dist < 0.18f) return true;
+        if (dist < 0.08f) return true;
 
         Transform raizJugador = Camera.main != null ? Camera.main.transform.root : null;
+        float alcanceChequeo = Mathf.Max(0.02f, dist - 0.015f);
 
-        RaycastHit[] hits = Physics.RaycastAll(origen, dir.normalized, dist - 0.08f, ~0, QueryTriggerInteraction.Ignore);
+        if (HayObstaculoSolidoEnRayo(origen, dir.normalized, alcanceChequeo, destino, objetivoTransform, raizJugador))
+            return false;
+
+        // Raycast inverso adicional para detectar muros con MeshCollider de una sola cara (backface)
+        if (HayObstaculoSolidoEnRayo(destino - dir.normalized * 0.012f, -dir.normalized, alcanceChequeo, destino, objetivoTransform, raizJugador))
+            return false;
+
+        return true;
+    }
+
+    private static bool HayObstaculoSolidoEnRayo(
+        Vector3 origenRayo,
+        Vector3 dirNorm,
+        float distanciaMax,
+        Vector3 destinoOriginal,
+        Transform objetivoTransform,
+        Transform raizJugador)
+    {
+        RaycastHit[] hits = Physics.RaycastAll(origenRayo, dirNorm, distanciaMax, ~0, QueryTriggerInteraction.Ignore);
         for (int i = 0; i < hits.Length; i++)
         {
             Collider c = hits[i].collider;
             if (c == null || c.isTrigger) continue;
-            if ( c is CharacterController ) continue;
+            if (c is CharacterController) continue;
 
             Transform tc = c.transform;
             if (raizJugador != null && (tc == raizJugador || tc.IsChildOf(raizJugador)))
@@ -132,15 +151,13 @@ public class InteractorUniversalVR : MonoBehaviour
             if (objetivoTransform != null && (tc == objetivoTransform || tc.IsChildOf(objetivoTransform) || objetivoTransform.IsChildOf(tc)))
                 continue;
 
-            // Si el impacto es en el collider del mueble justo pegado a su propia puerta/cajón/TV (ej. cuerpo del refrigerador o lavabo), no auto-bloquear
-            if (tc.name == "Collider_Mueble_Solido" && Vector3.Distance(hits[i].point, destino) < 0.35f)
+            // Si el impacto es en el collider del mueble justo pegado a su propia puerta/cajón/TV (nunca aplica a muros ni switches), no auto-bloquear
+            if (tc.name == "Collider_Mueble_Solido" && Vector3.Distance(hits[i].point, destinoOriginal) < 0.35f)
                 continue;
 
-            // Hay un muro, puerta cerrada o mueble sólido atravesado entre el jugador y el objeto
-            return false;
+            return true;
         }
-
-        return true;
+        return false;
     }
 
     public static void AsegurarPuertasYSwitchesEnEscena()
@@ -326,12 +343,16 @@ public class InteractorUniversalVR : MonoBehaviour
 
     private void EvaluarCandidato(MonoBehaviour script, Vector3 posObjeto, Transform cam, float rangoMax, ref float mejorPuntaje, string etiqueta)
     {
+        InterruptorLuz swCand = script as InterruptorLuz;
+        if (swCand != null && !swCand.EstaDelLadoFrontal(cam.position))
+            return;
+
         if (!EstaDentroDeRangoYLineaDeVision(posObjeto, rangoMax, script != null ? script.transform : null))
             return;
 
         float distCam = Vector3.Distance(cam.position, posObjeto);
 
-        // A) Verificar si alguno de los rayos de los mandos VR apunta hacia el objeto (dentro del rango realista)
+        // A) Verificar si alguno de los rayos de los mandos VR apunta hacia el objeto (con línea de visión libre sin muros)
         if (cacheRayosXR != null)
         {
             foreach (var ray in cacheRayosXR)
@@ -340,6 +361,12 @@ public class InteractorUniversalVR : MonoBehaviour
                 Transform rayOrigin = ray.rayOriginTransform != null ? ray.rayOriginTransform : ray.transform;
                 float distMano = Vector3.Distance(rayOrigin.position, posObjeto);
                 if (distMano > rangoMax) continue;
+
+                if (swCand != null && !swCand.EstaDelLadoFrontal(rayOrigin.position))
+                    continue;
+
+                if (!TieneLineaDeVisionDirecta(rayOrigin.position, posObjeto, script != null ? script.transform : null))
+                    continue;
 
                 Vector3 dirDesdeMano = (posObjeto - rayOrigin.position).normalized;
                 float anguloRayo = Vector3.Angle(rayOrigin.forward, dirDesdeMano);

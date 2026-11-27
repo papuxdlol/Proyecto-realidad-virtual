@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -27,12 +28,18 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
     public float distanciaAperturaCajon = 0.26f;
     public float velocidadCajon = 1.4f;
     public Transform piezaMovilCajon;
+    public AudioClip clipCajonReal;
 
     [Header("Si es Puerta de Refrigerador / Microondas / Gabinete")]
     public float anguloAperturaPuerta = -85f;
     public float velocidadGiroPuerta = 180f;
     public Vector3 ejeGiroLocalOMundial = Vector3.up;
     public bool usarPivoteBorde = false;
+    public AudioClip clipRefrigerador;
+    public AudioClip clipMicroondas;
+    public AudioClip clipLavadora;
+    public AudioClip clipGabinete;
+    public AudioClip clipEstaticaTV;
 
     [Header("Si es Televisor (Soporta GIF por Frames o VideoClip MP4)")]
     [Tooltip("Arrastra aquí los cuadros (sprites/texturas) de tu GIF si quieres mostrar un GIF personalizado")]
@@ -50,6 +57,8 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
     private BoxCollider hitboxPositivo;
     private XRSimpleInteractable interactable;
     private AudioSource audioSource;
+    private AudioSource audioEstaticaLoop;
+    private Coroutine rutinaRecorteAudio;
     private Light luzInteriorOPantalla;
 
     // Pantalla TV
@@ -64,6 +73,11 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
     private static AudioClip clipCajon;
     private static AudioClip clipElectrodomestico;
     private static AudioClip clipBotonTV;
+    private static AudioClip cacheFridge;
+    private static AudioClip cacheMicro;
+    private static AudioClip cacheWash;
+    private static AudioClip cacheCabinet;
+    private static AudioClip cacheTvStatic;
     private static readonly List<InteractivoMuebleYElectronicoVR> instanciasActivas = new List<InteractivoMuebleYElectronicoVR>();
 
     public static void NotificarCambioEnergiaGeneral(bool hayEnergia)
@@ -89,7 +103,8 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
                 estaActivoOAbierto = false;
                 if (quadPantallaTV != null) quadPantallaTV.SetActive(false);
                 if (luzInteriorOPantalla != null) luzInteriorOPantalla.enabled = false;
-                if (videoPlayerTV != null && videoPlayerTV.isPlaying) videoPlayerTV.Pause();
+                if (videoPlayerTV != null && videoClipPersonalizado != null && videoPlayerTV.isPlaying) videoPlayerTV.Pause();
+                if (audioEstaticaLoop != null && audioEstaticaLoop.isPlaying) audioEstaticaLoop.Stop();
             }
         }
         else if (tipoInteractivo == TipoInteractivoCasa.RadioSonido)
@@ -98,6 +113,7 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
             {
                 estaActivoOAbierto = false;
                 if (audioSource != null && audioSource.isPlaying) audioSource.Stop();
+                if (audioEstaticaLoop != null && audioEstaticaLoop.isPlaying) audioEstaticaLoop.Stop();
             }
         }
         else if (tipoInteractivo == TipoInteractivoCasa.PuertaElectrodomesticoOGabinete)
@@ -117,13 +133,14 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
 
         if (tipoInteractivo == TipoInteractivoCasa.CajonDeslizable)
         {
-            if (abrirOEncender && audioSource != null && clipCajon != null)
-                audioSource.PlayOneShot(clipCajon, 0.7f);
+            AudioClip c = clipCajonReal != null ? clipCajonReal : clipCajon;
+            if (abrirOEncender && audioSource != null && c != null)
+                audioSource.PlayOneShot(c, 0.70f);
         }
         else if (tipoInteractivo == TipoInteractivoCasa.PuertaElectrodomesticoOGabinete)
         {
-            if (abrirOEncender && audioSource != null && clipElectrodomestico != null)
-                audioSource.PlayOneShot(clipElectrodomestico, 0.75f);
+            if (abrirOEncender)
+                ReproducirSonidoPuertaElectrodomesticoOGabinete(true);
             if (luzInteriorOPantalla != null)
                 luzInteriorOPantalla.enabled = estaActivoOAbierto && hayEnergia;
         }
@@ -138,11 +155,16 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
                 if (estaActivoOAbierto && hayEnergia) videoPlayerTV.Play();
                 else videoPlayerTV.Pause();
             }
+            if (!estaActivoOAbierto && audioEstaticaLoop != null && audioEstaticaLoop.isPlaying)
+                audioEstaticaLoop.Stop();
         }
         else if (tipoInteractivo == TipoInteractivoCasa.RadioSonido)
         {
-            if (audioSource != null && !estaActivoOAbierto && audioSource.isPlaying)
-                audioSource.Stop();
+            if (!estaActivoOAbierto)
+            {
+                if (audioSource != null && audioSource.isPlaying) audioSource.Stop();
+                if (audioEstaticaLoop != null && audioEstaticaLoop.isPlaying) audioEstaticaLoop.Stop();
+            }
         }
     }
 
@@ -539,8 +561,53 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
         audioSource.minDistance = 0.6f;
         audioSource.maxDistance = 8f;
 
+#if UNITY_EDITOR
+        if (cacheFridge == null)
+            cacheFridge = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-fridge-hum-and-door-68902.mp3");
+        if (cacheMicro == null)
+            cacheMicro = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-microwave-door-open-90798.mp3");
+        if (cacheWash == null)
+            cacheWash = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-door-washing-machine-94161.mp3");
+        if (cacheCabinet == null)
+            cacheCabinet = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-opening-closing-cabinet-door-101970.mp3");
+        if (cacheTvStatic == null)
+            cacheTvStatic = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/yourugor-tv-static-noise-291374.mp3");
+#endif
+        if (clipRefrigerador == null) clipRefrigerador = cacheFridge;
+        if (clipMicroondas == null) clipMicroondas = cacheMicro;
+        if (clipLavadora == null) clipLavadora = cacheWash;
+        if (clipGabinete == null) clipGabinete = cacheCabinet;
+        if (clipEstaticaTV == null) clipEstaticaTV = cacheTvStatic;
+
+        if (tipoInteractivo == TipoInteractivoCasa.TelevisorConGifOVideo || tipoInteractivo == TipoInteractivoCasa.RadioSonido)
+        {
+            if (audioEstaticaLoop == null)
+            {
+                GameObject objEst = new GameObject("Emisor_Estatica_TV_VR");
+                objEst.transform.SetParent(transform, false);
+                audioEstaticaLoop = objEst.AddComponent<AudioSource>();
+                audioEstaticaLoop.playOnAwake = false;
+                audioEstaticaLoop.spatialBlend = 1f;
+                audioEstaticaLoop.rolloffMode = AudioRolloffMode.Linear;
+                audioEstaticaLoop.minDistance = 0.6f;
+                audioEstaticaLoop.maxDistance = 6.5f;
+                audioEstaticaLoop.loop = true;
+                audioEstaticaLoop.volume = 0.22f;
+            }
+            if (clipEstaticaTV != null)
+                audioEstaticaLoop.clip = clipEstaticaTV;
+        }
+
         if (clipCajon == null)
-            clipCajon = CrearSonidoProcedural("DrawerSlide", 130f, 95f, 0.18f, 0.35f);
+        {
+#if UNITY_EDITOR
+            clipCajon = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/freesound_community-drawer-41055.mp3");
+#endif
+            if (clipCajon == null && clipCajonReal != null)
+                clipCajon = clipCajonReal;
+            if (clipCajon == null)
+                clipCajon = CrearSonidoProcedural("DrawerSlide", 130f, 95f, 0.18f, 0.35f);
+        }
         if (clipElectrodomestico == null)
             clipElectrodomestico = CrearSonidoProcedural("ApplianceLatch", 320f, 180f, 0.12f, 0.4f);
         if (clipBotonTV == null)
@@ -624,13 +691,13 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
 
         if (tipoInteractivo == TipoInteractivoCasa.CajonDeslizable)
         {
-            if (audioSource != null && clipCajon != null)
-                audioSource.PlayOneShot(clipCajon);
+            AudioClip c = clipCajonReal != null ? clipCajonReal : clipCajon;
+            if (audioSource != null && c != null)
+                audioSource.PlayOneShot(c, 0.75f);
         }
         else if (tipoInteractivo == TipoInteractivoCasa.PuertaElectrodomesticoOGabinete)
         {
-            if (audioSource != null && clipElectrodomestico != null)
-                audioSource.PlayOneShot(clipElectrodomestico);
+            ReproducirSonidoPuertaElectrodomesticoOGabinete(estaActivoOAbierto);
             if (luzInteriorOPantalla != null)
                 luzInteriorOPantalla.enabled = estaActivoOAbierto && hayEnergia;
         }
@@ -643,6 +710,24 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
             if (luzInteriorOPantalla != null)
                 luzInteriorOPantalla.enabled = estaActivoOAbierto;
 
+            if (audioEstaticaLoop != null && clipEstaticaTV != null)
+            {
+                audioEstaticaLoop.clip = clipEstaticaTV;
+                if (estaActivoOAbierto)
+                {
+                    audioEstaticaLoop.volume = 0.28f;
+                    audioEstaticaLoop.Play();
+                }
+                else if (gameObject.activeInHierarchy)
+                {
+                    StartCoroutine(RutinaDesvanecerAudio(audioEstaticaLoop, 0.14f));
+                }
+                else
+                {
+                    audioEstaticaLoop.Stop();
+                }
+            }
+
             if (videoPlayerTV != null && videoClipPersonalizado != null)
             {
                 if (estaActivoOAbierto) videoPlayerTV.Play();
@@ -651,17 +736,120 @@ public class InteractivoMuebleYElectronicoVR : MonoBehaviour
         }
         else if (tipoInteractivo == TipoInteractivoCasa.RadioSonido)
         {
-            if (audioSource != null)
+            if (audioSource != null && clipBotonTV != null)
+                audioSource.PlayOneShot(clipBotonTV);
+            if (audioEstaticaLoop != null && clipEstaticaTV != null)
             {
+                audioEstaticaLoop.clip = clipEstaticaTV;
                 if (estaActivoOAbierto)
                 {
-                    audioSource.PlayOneShot(clipBotonTV);
+                    audioEstaticaLoop.volume = 0.26f;
+                    audioEstaticaLoop.Play();
+                }
+                else if (gameObject.activeInHierarchy)
+                {
+                    StartCoroutine(RutinaDesvanecerAudio(audioEstaticaLoop, 0.14f));
                 }
                 else
                 {
-                    audioSource.Stop();
+                    audioEstaticaLoop.Stop();
                 }
             }
+        }
+    }
+
+    private void ReproducirSonidoPuertaElectrodomesticoOGabinete(bool abriendo)
+    {
+        if (audioSource == null) return;
+        string n = gameObject.name.ToLowerInvariant();
+
+        if (n.StartsWith("refrigerator_door") && clipRefrigerador != null)
+        {
+            // En fridge-hum-and-door: 0.08s = abrir sello del refri; 44.92s = golpe real al cerrar la puerta con cola acústica completa
+            ReproducirSegmentoExacto(clipRefrigerador, abriendo ? 0.08f : 44.92f, abriendo ? 1.25f : 1.65f, 0.82f);
+            return;
+        }
+        if (n.StartsWith("microwave_door") && clipMicroondas != null)
+        {
+            // En microwave-door-open: 0.24s = abrir puerta; 3.40s = clic real al cerrar con decaimiento natural
+            ReproducirSegmentoExacto(clipMicroondas, abriendo ? 0.24f : 3.40f, abriendo ? 1.08f : 1.02f, 0.80f);
+            return;
+        }
+        if (n.StartsWith("washing_machine_d") && clipLavadora != null)
+        {
+            // En door-washing-machine: el pestillo empieza en 0.70s + resonancia natural sin cortar en seco
+            ReproducirSegmentoExacto(clipLavadora, 0.70f, 1.32f, 0.82f);
+            return;
+        }
+        if (clipGabinete != null)
+        {
+            // En opening-closing-cabinet-door: 2.22s = abrir gabinete; 6.90s = cerrar gabinete con cola suave
+            ReproducirSegmentoExacto(clipGabinete, abriendo ? 2.22f : 6.90f, abriendo ? 1.04f : 0.96f, 0.80f);
+            return;
+        }
+
+        if (clipElectrodomestico != null)
+            audioSource.PlayOneShot(clipElectrodomestico, 0.75f);
+    }
+
+    private void ReproducirSegmentoExacto(AudioClip clip, float inicioSeg, float duracionSeg, float volumen)
+    {
+        if (audioSource == null || clip == null) return;
+        if (rutinaRecorteAudio != null)
+        {
+            StopCoroutine(rutinaRecorteAudio);
+            rutinaRecorteAudio = null;
+        }
+
+        audioSource.Stop();
+        audioSource.clip = clip;
+        audioSource.loop = false;
+        audioSource.pitch = Random.Range(0.96f, 1.04f);
+        audioSource.volume = volumen;
+        audioSource.time = Mathf.Clamp(inicioSeg, 0f, Mathf.Max(0f, clip.length - 0.05f));
+        audioSource.Play();
+
+        if (gameObject.activeInHierarchy)
+            rutinaRecorteAudio = StartCoroutine(RutinaDetenerSegmentoAudio(duracionSeg, volumen));
+    }
+
+    private IEnumerator RutinaDetenerSegmentoAudio(float duracion, float volInicial)
+    {
+        float fadeSeg = Mathf.Min(0.30f, duracion * 0.35f);
+        float esperaPlena = Mathf.Max(0.05f, duracion - fadeSeg);
+        yield return new WaitForSeconds(esperaPlena);
+
+        float t = 0f;
+        while (t < fadeSeg && audioSource != null && audioSource.isPlaying)
+        {
+            t += Time.deltaTime;
+            float p = Mathf.Clamp01(t / fadeSeg);
+            audioSource.volume = volInicial * (0.5f * (1f + Mathf.Cos(p * Mathf.PI)));
+            yield return null;
+        }
+
+        if (audioSource != null && audioSource.isPlaying)
+            audioSource.Stop();
+        if (audioSource != null)
+            audioSource.volume = volInicial;
+        rutinaRecorteAudio = null;
+    }
+
+    private static IEnumerator RutinaDesvanecerAudio(AudioSource src, float duracion)
+    {
+        if (src == null || !src.isPlaying) yield break;
+        float v0 = src.volume;
+        float t = 0f;
+        while (t < duracion && src != null && src.isPlaying)
+        {
+            t += Time.deltaTime;
+            src.volume = Mathf.Lerp(v0, 0f, t / duracion);
+            yield return null;
+        }
+        if (src != null)
+        {
+            src.Stop();
+            src.volume = v0;
         }
     }
 

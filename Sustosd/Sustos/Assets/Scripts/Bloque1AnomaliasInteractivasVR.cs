@@ -14,13 +14,27 @@ public class Bloque1AnomaliasInteractivasVR : MonoBehaviour
 {
     public static Bloque1AnomaliasInteractivasVR Instancia;
 
+    [Header("Audios Reales (Teléfonos Análogos, Tic-Tac de Relojes y Estática de TV)")]
+    public AudioClip clipTelefonoAnalogo;
+    public AudioClip clipTicTacReloj;
+    public AudioClip clipEstaticaTV;
+
     private struct RelojDespertadorVivo
     {
         public ObjetoAnomalia anomalia;
         public TextMeshPro textoLED;
+        public AudioSource audioTicTac;
+    }
+
+    private struct TelefonoAnalogoVivo
+    {
+        public ObjetoAnomalia anomalia;
+        public AudioSource audioTimbre;
+        public float proximoTimbrazo;
     }
 
     private readonly List<RelojDespertadorVivo> relojesEnCasa = new List<RelojDespertadorVivo>();
+    private readonly List<TelefonoAnalogoVivo> telefonosEnCasa = new List<TelefonoAnalogoVivo>();
     private float temporizadorActualizacionReloj = 0f;
 
     private static Material materialPinturaNormal;
@@ -36,7 +50,20 @@ public class Bloque1AnomaliasInteractivasVR : MonoBehaviour
             return;
         }
         Instancia = this;
+        AsegurarClipsRealesPorDefecto();
         InicializarTodoBloque1();
+    }
+
+    private void AsegurarClipsRealesPorDefecto()
+    {
+#if UNITY_EDITOR
+        if (clipTelefonoAnalogo == null)
+            clipTelefonoAnalogo = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/Telefono.mp3");
+        if (clipTicTacReloj == null)
+            clipTicTacReloj = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/tic-tac-emilly.mp3");
+        if (clipEstaticaTV == null)
+            clipEstaticaTV = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/yourugor-tv-static-noise-291374.mp3");
+#endif
     }
 
     void Start()
@@ -53,20 +80,57 @@ public class Bloque1AnomaliasInteractivasVR : MonoBehaviour
 
     public void InicializarTodoBloque1()
     {
+        AsegurarClipsRealesPorDefecto();
         AsegurarCuadrosImageryEnParedes();
         AsegurarAnomaliaPuertaAbismalUnknown();
+        VentanasYLimitesVR.ConstruirLetrerosHabitaciones();
         ConfigurarMueblesAparatosRelojesYTelefonos();
     }
 
     void Update()
     {
+        if (VRPauseMenu.IsMenuOpen || FinalTurnoVR.EstaEnSecuenciaFinal) return;
+
+        bool hayEnergia = InterruptorLuz.EnergiaGeneralCasaActiva;
+
+        // Cadencia realista de teléfono análogo (timbrazo de ~1.08s seguido de ~1.75s de silencio)
+        for (int t = 0; t < telefonosEnCasa.Count; t++)
+        {
+            TelefonoAnalogoVivo tel = telefonosEnCasa[t];
+            if (tel.anomalia == null || tel.audioTimbre == null) continue;
+
+            bool sonando = tel.anomalia.estaActiva && tel.anomalia.tipoActivoActual == TipoAnomalia.Electrical;
+            if (sonando)
+            {
+                tel.audioTimbre.volume = 0.52f;
+                if (Time.time >= tel.proximoTimbrazo)
+                {
+                    AudioClip cTel = clipTelefonoAnalogo != null ? clipTelefonoAnalogo : ObtenerClipTimbreTelefono();
+                    if (cTel != null)
+                        tel.audioTimbre.PlayOneShot(cTel, 0.52f);
+                    tel.proximoTimbrazo = Time.time + 2.85f;
+                    telefonosEnCasa[t] = tel;
+                }
+            }
+            else if (tel.proximoTimbrazo != 0f || tel.audioTimbre.isPlaying)
+            {
+                if (tel.audioTimbre.isPlaying)
+                {
+                    tel.audioTimbre.volume = Mathf.MoveTowards(tel.audioTimbre.volume, 0f, Time.deltaTime * 2.8f);
+                    if (tel.audioTimbre.volume <= 0.01f)
+                        tel.audioTimbre.Stop();
+                }
+                tel.proximoTimbrazo = 0f;
+                telefonosEnCasa[t] = tel;
+            }
+        }
+
         if (relojesEnCasa.Count == 0) return;
 
         temporizadorActualizacionReloj += Time.deltaTime;
         if (temporizadorActualizacionReloj < 0.25f) return;
         temporizadorActualizacionReloj = 0f;
 
-        bool hayEnergia = InterruptorLuz.EnergiaGeneralCasaActiva;
         TabletSistemaVR tablet = TabletSistemaVR.Instancia;
         string textoHoraNormal = "12:00";
 
@@ -85,6 +149,31 @@ public class Bloque1AnomaliasInteractivasVR : MonoBehaviour
         for (int i = 0; i < relojesEnCasa.Count; i++)
         {
             RelojDespertadorVivo r = relojesEnCasa[i];
+            bool relojAnomalo = r.anomalia != null && r.anomalia.estaActiva && r.anomalia.tipoActivoActual == TipoAnomalia.Electrical;
+
+            // Tic-tac 3D sutil en los relojes de las recámaras; al corromperse a 66:66 acelera/distorsiona su compás
+            if (r.audioTicTac != null && r.audioTicTac.clip != null)
+            {
+                if (!r.audioTicTac.isPlaying)
+                {
+                    r.audioTicTac.time = Random.Range(0f, Mathf.Max(0f, r.audioTicTac.clip.length - 2f));
+                    r.audioTicTac.Play();
+                }
+
+                if (relojAnomalo && hayEnergia)
+                {
+                    r.audioTicTac.volume = 0.24f;
+                    r.audioTicTac.maxDistance = 6.2f;
+                    r.audioTicTac.pitch = 1.36f + Mathf.Sin(Time.time * 5.2f) * 0.22f;
+                }
+                else
+                {
+                    r.audioTicTac.volume = 0.065f;
+                    r.audioTicTac.maxDistance = 3.4f;
+                    r.audioTicTac.pitch = 1.0f;
+                }
+            }
+
             if (r.textoLED == null) continue;
 
             if (!hayEnergia)
@@ -93,7 +182,7 @@ public class Bloque1AnomaliasInteractivasVR : MonoBehaviour
                 continue;
             }
 
-            if (r.anomalia != null && r.anomalia.estaActiva && r.anomalia.tipoActivoActual == TipoAnomalia.Electrical)
+            if (relojAnomalo)
             {
                 r.textoLED.text = parpadeo ? txtCorruptoActual : "66:66";
                 r.textoLED.color = parpadeo ? new Color(1f, 0.12f, 0.12f, 1f) : new Color(0.65f, 0.05f, 0.05f, 1f);
@@ -289,6 +378,7 @@ public class Bloque1AnomaliasInteractivasVR : MonoBehaviour
     private void ConfigurarMueblesAparatosRelojesYTelefonos()
     {
         relojesEnCasa.Clear();
+        telefonosEnCasa.Clear();
         GameObject house = GameObject.Find("House");
         if (house == null) return;
 
@@ -315,56 +405,90 @@ public class Bloque1AnomaliasInteractivasVR : MonoBehaviour
                     });
                 }
             }
-            // 2. APARATOS ELECTRÓNICOS INTERACTIVOS (TVs, Puerta Refrigerador, Puerta Microondas) -> ELECTRICAL
-            else if (n.StartsWith("tv_0") || n.StartsWith("refrigerator_door") || n.StartsWith("microwave_door"))
+            // 2a. TELEVISORES INTERACTIVOS (TVs) -> Estática real yourugor-tv-static-noise (ELECTRICAL)
+            else if (n.StartsWith("tv_0"))
             {
                 ObjetoAnomalia anom = AsegurarComponenteAnomalia(t.gameObject, cuarto);
-                if (!anom.posiblesVariantes.Exists(v => v != null && v.tipo == TipoAnomalia.Electrical))
+                AudioSource aud = AsegurarAudio3D(t.gameObject, clipEstaticaTV, true, 0.36f);
+                anom.posiblesVariantes.Clear();
+                anom.posiblesVariantes.Add(new VarianteAnomalia
                 {
-                    AudioSource aud = AsegurarAudio3D(t.gameObject, null, true, 0.45f);
-                    anom.posiblesVariantes.Add(new VarianteAnomalia
-                    {
-                        nombreDescriptivo = "Aparato electrónico encendido/abierto solo (Electrical)",
-                        tipo = TipoAnomalia.Electrical,
-                        audioEvento = aud,
-                        sonidoEnBucle = true
-                    });
-                }
+                    nombreDescriptivo = "Televisor encendido solo con estática (Electrical)",
+                    tipo = TipoAnomalia.Electrical,
+                    audioEvento = aud,
+                    sonidoEnBucle = true
+                });
             }
-            // 3. RELOJES DESPERTADORES VIVOS (Alarm_clock*) -> Hora en vivo + Anomalía 66:66 (ELECTRICAL)
+            // 2b. PUERTAS DE ELECTRODOMÉSTICOS (Refrigerador y Microondas) -> Se abren solas con su sonido real de puerta (ELECTRICAL)
+            else if (n.StartsWith("refrigerator_door") || n.StartsWith("microwave_door"))
+            {
+                ObjetoAnomalia anom = AsegurarComponenteAnomalia(t.gameObject, cuarto);
+                anom.posiblesVariantes.Clear();
+                anom.posiblesVariantes.Add(new VarianteAnomalia
+                {
+                    nombreDescriptivo = "Electrodoméstico abierto solo (Electrical)",
+                    tipo = TipoAnomalia.Electrical,
+                    audioEvento = null,
+                    sonidoEnBucle = false
+                });
+            }
+            // 3. RELOJES VIVOS (Alarm_clock*) -> Tic-tac sutil 3D (tic-tac-emilly) + Anomalía 66:66 (ELECTRICAL)
             else if (n.StartsWith("alarm_clock"))
             {
                 ObjetoAnomalia anom = AsegurarComponenteAnomalia(t.gameObject, cuarto);
                 TextMeshPro tmp = AsegurarDisplayLEDDespertador(t, mr);
 
-                AudioSource aud = AsegurarAudio3D(t.gameObject, ObtenerClipAlarmaDespertador(), true, 0.38f);
+                AudioClip clipReloj = clipTicTacReloj != null ? clipTicTacReloj : ObtenerClipAlarmaDespertador();
+                AudioSource aud = AsegurarAudio3D(t.gameObject, clipReloj, true, 0.065f);
+                aud.rolloffMode = AudioRolloffMode.Linear;
+                aud.minDistance = 0.35f;
+                aud.maxDistance = 3.4f;
+
                 anom.posiblesVariantes.Clear();
                 anom.posiblesVariantes.Add(new VarianteAnomalia
                 {
-                    nombreDescriptivo = "Reloj despertador alterado 66:66 con alarma (Electrical)",
+                    nombreDescriptivo = "Reloj despertador alterado 66:66 con tic-tac distorsionado (Electrical)",
+                    tipo = TipoAnomalia.Electrical,
+                    audioEvento = clipTicTacReloj != null ? null : aud,
+                    sonidoEnBucle = true
+                });
+
+                relojesEnCasa.Add(new RelojDespertadorVivo { anomalia = anom, textoLED = tmp, audioTicTac = aud });
+            }
+            // 4. TELÉFONOS ANÁLOGOS (Phone, Phone_01) -> Timbre real Telefono.mp3 con cadencia analógica (ELECTRICAL)
+            else if (n == "phone" || n == "phone_01")
+            {
+                ObjetoAnomalia anom = AsegurarComponenteAnomalia(t.gameObject, cuarto);
+                AudioClip cTel = clipTelefonoAnalogo != null ? clipTelefonoAnalogo : ObtenerClipTimbreTelefono();
+                AudioSource aud = AsegurarAudio3D(t.gameObject, cTel, false, 0.52f);
+                aud.rolloffMode = AudioRolloffMode.Linear;
+                aud.minDistance = 0.75f;
+                aud.maxDistance = 9.0f;
+
+                anom.posiblesVariantes.Clear();
+                anom.posiblesVariantes.Add(new VarianteAnomalia
+                {
+                    nombreDescriptivo = "Teléfono análogo sonando solo (Electrical)",
+                    tipo = TipoAnomalia.Electrical,
+                    audioEvento = null,
+                    sonidoEnBucle = false
+                });
+
+                telefonosEnCasa.Add(new TelefonoAnalogoVivo { anomalia = anom, audioTimbre = aud, proximoTimbrazo = 0f });
+            }
+            // 5. RADIO (Radio_01.001) -> Estática sola (ELECTRICAL)
+            else if (n.StartsWith("radio_0"))
+            {
+                ObjetoAnomalia anom = AsegurarComponenteAnomalia(t.gameObject, cuarto);
+                AudioSource aud = AsegurarAudio3D(t.gameObject, clipEstaticaTV, true, 0.34f);
+                anom.posiblesVariantes.Clear();
+                anom.posiblesVariantes.Add(new VarianteAnomalia
+                {
+                    nombreDescriptivo = "Radio encendida sola con estática (Electrical)",
                     tipo = TipoAnomalia.Electrical,
                     audioEvento = aud,
                     sonidoEnBucle = true
                 });
-
-                relojesEnCasa.Add(new RelojDespertadorVivo { anomalia = anom, textoLED = tmp });
-            }
-            // 4. TELÉFONOS Y RADIO (Phone, Phone_01, Radio_01.001) -> Timbre/Interferencia sola (ELECTRICAL)
-            else if (n == "phone" || n == "phone_01" || n.StartsWith("radio_0"))
-            {
-                ObjetoAnomalia anom = AsegurarComponenteAnomalia(t.gameObject, cuarto);
-                AudioSource aud = AsegurarAudio3D(t.gameObject, ObtenerClipTimbreTelefono(), true, 0.42f);
-
-                if (!anom.posiblesVariantes.Exists(v => v != null && v.tipo == TipoAnomalia.Electrical))
-                {
-                    anom.posiblesVariantes.Add(new VarianteAnomalia
-                    {
-                        nombreDescriptivo = "Teléfono/Radio sonando solo con interferencia (Electrical)",
-                        tipo = TipoAnomalia.Electrical,
-                        audioEvento = aud,
-                        sonidoEnBucle = true
-                    });
-                }
             }
         }
     }

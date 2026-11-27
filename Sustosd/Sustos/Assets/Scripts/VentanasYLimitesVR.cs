@@ -1,10 +1,13 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
+using TMPro;
 
 public static class VentanasYLimitesVR
 {
     private static Material materialVidrioTransparente;
+    private static Material materialBasePlacaPuerta;
+    private static Material materialBordeLatonPlaca;
 
     public static void ConfigurarNocheOscuraReal()
     {
@@ -553,5 +556,258 @@ public static class VentanasYLimitesVR
             return true;
 
         return false;
+    }
+
+    /// <summary>
+    /// Coloca placas arquitectónicas residenciales (madera nogal oscuro + borde latón + tipografía grabada clara)
+    /// en las puertas y muros del pasillo del segundo piso para identificar inequívocamente RECÁMARA 1, RECÁMARA 2, RECÁMARA 3 y BAÑO,
+    /// tanto con la puerta cerrada (placa en ambas caras de la hoja) como abierta (placa mural junto al marco en el pasillo).
+    /// </summary>
+    public static int ConstruirLetrerosHabitaciones()
+    {
+        GameObject house = GameObject.Find("House");
+        if (house == null) return 0;
+
+        Shader shLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+        if (materialBasePlacaPuerta == null)
+        {
+            materialBasePlacaPuerta = new Material(shLit)
+            {
+                name = "Mat_PlacaNogalHabitacion_VR",
+                color = new Color(0.11f, 0.08f, 0.06f, 1f)
+            };
+            materialBasePlacaPuerta.SetColor("_BaseColor", new Color(0.11f, 0.08f, 0.06f, 1f));
+            if (materialBasePlacaPuerta.HasProperty("_Smoothness")) materialBasePlacaPuerta.SetFloat("_Smoothness", 0.32f);
+        }
+        if (materialBordeLatonPlaca == null)
+        {
+            materialBordeLatonPlaca = new Material(shLit)
+            {
+                name = "Mat_LatonCepilladoPlaca_VR",
+                color = new Color(0.66f, 0.53f, 0.31f, 1f)
+            };
+            materialBordeLatonPlaca.SetColor("_BaseColor", new Color(0.66f, 0.53f, 0.31f, 1f));
+            if (materialBordeLatonPlaca.HasProperty("_Metallic")) materialBordeLatonPlaca.SetFloat("_Metallic", 0.55f);
+            if (materialBordeLatonPlaca.HasProperty("_Smoothness")) materialBordeLatonPlaca.SetFloat("_Smoothness", 0.45f);
+        }
+
+        (string nombrePuerta, string numero, string titulo)[] puertasPiso2 = new[]
+        {
+            ("Door_004", "1", "RECÁMARA 1"),
+            ("Door_001", "2", "RECÁMARA 2"),
+            ("Door_006", "3", "RECÁMARA 3"),
+            ("Door_003", "",  "BAÑO"),
+            ("Door_005", "",  "BAÑO")
+        };
+
+        Dictionary<string, Transform> puertasEnEscena = new Dictionary<string, Transform>(System.StringComparer.OrdinalIgnoreCase);
+        List<MeshRenderer> marcosPiso2 = new List<MeshRenderer>();
+
+        foreach (Transform t in house.GetComponentsInChildren<Transform>(true))
+        {
+            if (t == null || PuertaAutoCierre.EsObjetoDeHouseCollidersOInvisible(t)) continue;
+            if (t.name.StartsWith("Door_frame"))
+            {
+                MeshRenderer mrF = t.GetComponent<MeshRenderer>();
+                if (mrF != null && mrF.bounds.center.y > 3.2f)
+                    marcosPiso2.Add(mrF);
+            }
+            else if (t.name.StartsWith("Door_00"))
+            {
+                puertasEnEscena[t.name.Trim()] = t;
+            }
+        }
+
+        GameObject contenedorMural = GameObject.Find("Contenedor_Placas_Habitaciones_VR");
+        if (contenedorMural == null)
+            contenedorMural = new GameObject("Contenedor_Placas_Habitaciones_VR");
+
+        Vector3 centroPasilloPiso2 = new Vector3(16.15f, 5.20f, -4.15f);
+        int placasCreadas = 0;
+
+        for (int i = 0; i < puertasPiso2.Length; i++)
+        {
+            var info = puertasPiso2[i];
+            if (!puertasEnEscena.TryGetValue(info.nombrePuerta, out Transform puertaT) || puertaT == null)
+                continue;
+
+            MeshRenderer mrPuerta = puertaT.GetComponent<MeshRenderer>();
+            if (mrPuerta == null) continue;
+
+            PuertaAutoCierre pac = puertaT.GetComponent<PuertaAutoCierre>();
+            bool estabaAbierta = pac != null && pac.estaAbierta;
+            if (!estabaAbierta)
+            {
+                Bounds bp = mrPuerta.bounds;
+                bool hojaDelgadaEnX = bp.size.x < bp.size.z;
+                Vector3 ejeNormalHoja = hojaDelgadaEnX ? Vector3.right : Vector3.forward;
+                float mitadGrosorHoja = (hojaDelgadaEnX ? bp.extents.x : bp.extents.z) + 0.005f;
+                Vector3 centroPlacaHoja = new Vector3(bp.center.x, bp.min.y + 1.54f, bp.center.z);
+
+                string textoHoja = string.IsNullOrEmpty(info.numero)
+                    ? info.titulo
+                    : $"{info.numero}  ·  {info.titulo}";
+
+                CrearPlacaDobleCaraEnPuerta(puertaT, "Placa_Identificadora_VR", centroPlacaHoja, ejeNormalHoja, mitadGrosorHoja, textoHoja, !string.IsNullOrEmpty(info.numero));
+                placasCreadas++;
+            }
+
+            if (!string.IsNullOrEmpty(info.numero))
+            {
+                MeshRenderer mejorMarco = null;
+                float menorDist = 1.25f;
+                Vector3 refPos = mrPuerta.bounds.center;
+                for (int m = 0; m < marcosPiso2.Count; m++)
+                {
+                    float d = Vector3.Distance(refPos, marcosPiso2[m].bounds.center);
+                    if (d < menorDist)
+                    {
+                        menorDist = d;
+                        mejorMarco = marcosPiso2[m];
+                    }
+                }
+
+                if (mejorMarco != null)
+                {
+                    Bounds bm = mejorMarco.bounds;
+                    bool muroDelgadoEnX = bm.size.x < bm.size.z;
+                    Vector3 ejeNormalMuro = muroDelgadoEnX ? Vector3.right : Vector3.forward;
+                    Vector3 normalHaciaPasillo = Vector3.Dot(centroPasilloPiso2 - bm.center, ejeNormalMuro) >= 0f ? ejeNormalMuro : -ejeNormalMuro;
+                    Vector3 tangenteMuro = Vector3.Cross(Vector3.up, normalHaciaPasillo).normalized;
+                    float medioAnchoMarco = muroDelgadoEnX ? bm.extents.z : bm.extents.x;
+                    float alturaMuralY = 5.44f;
+
+                    Vector3 mejorPosMural = Vector3.zero;
+                    bool halloMuro = false;
+                    float[] signos = { 1f, -1f };
+                    for (int s = 0; s < signos.Length; s++)
+                    {
+                        Vector3 candidato = new Vector3(bm.center.x, alturaMuralY, bm.center.z)
+                                            + tangenteMuro * (signos[s] * (medioAnchoMarco + 0.19f));
+                        Vector3 origenRay = candidato + normalHaciaPasillo * 0.32f;
+                        if (Physics.Raycast(origenRay, -normalHaciaPasillo, out RaycastHit hitMuro, 0.55f, ~0, QueryTriggerInteraction.Ignore))
+                        {
+                            if (Mathf.Abs(Vector3.Dot(hitMuro.normal, normalHaciaPasillo)) > 0.85f)
+                            {
+                                mejorPosMural = hitMuro.point + normalHaciaPasillo * 0.008f;
+                                halloMuro = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (halloMuro)
+                    {
+                        CrearPlacaSimpleEnMundo(
+                            contenedorMural.transform,
+                            $"Placa_Pasillo_Recamara_{info.numero}",
+                            mejorPosMural,
+                            normalHaciaPasillo,
+                            $"{info.numero} · {info.titulo}",
+                            new Vector2(0.25f, 0.078f));
+                        placasCreadas++;
+                    }
+                }
+            }
+        }
+
+        return placasCreadas;
+    }
+
+    private static void CrearPlacaDobleCaraEnPuerta(
+        Transform puertaT,
+        string nombreRaiz,
+        Vector3 centroMundial,
+        Vector3 ejeNormal,
+        float offsetCara,
+        string texto,
+        bool esRecamara)
+    {
+        Transform existente = puertaT.Find(nombreRaiz);
+        if (existente != null)
+        {
+            if (Application.isPlaying) Object.Destroy(existente.gameObject);
+            else Object.DestroyImmediate(existente.gameObject);
+        }
+
+        GameObject raiz = new GameObject(nombreRaiz);
+        raiz.transform.position = centroMundial;
+        raiz.transform.rotation = Quaternion.LookRotation(ejeNormal, Vector3.up);
+        raiz.transform.localScale = Vector3.one;
+        raiz.transform.SetParent(puertaT, true);
+
+        Vector2 tam = esRecamara ? new Vector2(0.28f, 0.086f) : new Vector2(0.20f, 0.072f);
+        CrearPlacaSimpleEnMundo(raiz.transform, "Cara_A", centroMundial + ejeNormal * offsetCara, ejeNormal, texto, tam);
+        CrearPlacaSimpleEnMundo(raiz.transform, "Cara_B", centroMundial - ejeNormal * offsetCara, -ejeNormal, texto, tam);
+    }
+
+    private static void CrearPlacaSimpleEnMundo(
+        Transform padre,
+        string nombre,
+        Vector3 posMundial,
+        Vector3 normalFrente,
+        string texto,
+        Vector2 tamano)
+    {
+        Transform viejo = padre.Find(nombre);
+        if (viejo != null)
+        {
+            if (Application.isPlaying) Object.Destroy(viejo.gameObject);
+            else Object.DestroyImmediate(viejo.gameObject);
+        }
+
+        GameObject nodo = new GameObject(nombre);
+        nodo.transform.position = posMundial;
+        nodo.transform.rotation = Quaternion.LookRotation(normalFrente, Vector3.up);
+        nodo.transform.localScale = Vector3.one;
+
+        GameObject borde = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        borde.name = "Marco_Laton";
+        Collider c1 = borde.GetComponent<Collider>();
+        if (c1 != null) { if (Application.isPlaying) Object.Destroy(c1); else Object.DestroyImmediate(c1); }
+        borde.transform.SetParent(nodo.transform, false);
+        borde.transform.localPosition = Vector3.zero;
+        borde.transform.localScale = new Vector3(tamano.x, tamano.y, 0.006f);
+        MeshRenderer mrBorde = borde.GetComponent<MeshRenderer>();
+        if (mrBorde != null)
+        {
+            mrBorde.sharedMaterial = materialBordeLatonPlaca;
+            mrBorde.shadowCastingMode = ShadowCastingMode.Off;
+        }
+
+        GameObject fondo = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        fondo.name = "Base_Nogal";
+        Collider c2 = fondo.GetComponent<Collider>();
+        if (c2 != null) { if (Application.isPlaying) Object.Destroy(c2); else Object.DestroyImmediate(c2); }
+        fondo.transform.SetParent(nodo.transform, false);
+        fondo.transform.localPosition = new Vector3(0f, 0f, 0.0015f);
+        fondo.transform.localScale = new Vector3(tamano.x - 0.012f, tamano.y - 0.012f, 0.006f);
+        MeshRenderer mrFondo = fondo.GetComponent<MeshRenderer>();
+        if (mrFondo != null)
+        {
+            mrFondo.sharedMaterial = materialBasePlacaPuerta;
+            mrFondo.shadowCastingMode = ShadowCastingMode.Off;
+        }
+
+        GameObject txtObj = new GameObject("Texto_Placa_TMP");
+        txtObj.transform.SetParent(nodo.transform, false);
+        txtObj.transform.localPosition = new Vector3(0f, 0f, 0.0056f);
+        txtObj.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        txtObj.transform.localScale = Vector3.one;
+
+        TextMeshPro tmp = txtObj.AddComponent<TextMeshPro>();
+        RectTransform rt = tmp.GetComponent<RectTransform>();
+        if (rt != null) rt.sizeDelta = new Vector2(tamano.x - 0.018f, tamano.y - 0.014f);
+
+        tmp.text = texto;
+        tmp.fontSize = texto.Length > 8 ? 0.27f : 0.29f;
+        tmp.fontStyle = FontStyles.Bold;
+        tmp.alignment = TextAlignmentOptions.Center;
+        tmp.textWrappingMode = TextWrappingModes.NoWrap;
+        tmp.color = new Color(0.95f, 0.89f, 0.74f, 0.98f);
+        Renderer rTmp = tmp.GetComponent<Renderer>();
+        if (rTmp != null) rTmp.shadowCastingMode = ShadowCastingMode.Off;
+
+        nodo.transform.SetParent(padre, true);
     }
 }

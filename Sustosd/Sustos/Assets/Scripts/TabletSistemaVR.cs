@@ -27,6 +27,8 @@ public class TabletSistemaVR : MonoBehaviour
 
     [Header("3. Sonidos de la Tablet")]
     public AudioSource audioFeedback;
+    private AudioSource audioProcesandoSource;
+    private AudioSource audioGlitchSource;
     public AudioClip sonidoAcierto;
     public AudioClip sonidoFallo;
     public AudioClip sonidoProcesando;
@@ -261,6 +263,32 @@ public class TabletSistemaVR : MonoBehaviour
         audioFeedback.playOnAwake = false;
         audioFeedback.spatialBlend = 0.5f;
 
+        if (audioProcesandoSource == null)
+        {
+            audioProcesandoSource = gameObject.AddComponent<AudioSource>();
+            audioProcesandoSource.playOnAwake = false;
+            audioProcesandoSource.spatialBlend = 0.5f;
+            audioProcesandoSource.loop = false;
+        }
+
+        if (audioGlitchSource == null)
+        {
+            audioGlitchSource = gameObject.AddComponent<AudioSource>();
+            audioGlitchSource.playOnAwake = false;
+            audioGlitchSource.spatialBlend = 0.5f;
+            audioGlitchSource.loop = false;
+        }
+
+#if UNITY_EDITOR
+        if (sonidoAcierto == null)
+            sonidoAcierto = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_tablet_acierto.wav");
+        if (sonidoFallo == null)
+            sonidoFallo = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_tablet_fallo.wav");
+        if (sonidoProcesando == null)
+            sonidoProcesando = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_tablet_procesando.wav");
+        if (sonidoGlitch == null)
+            sonidoGlitch = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/glitchstarting.mp3");
+#endif
         if (sonidoClickUI == null)
             sonidoClickUI = CrearTonoProcedural("TabletClick", 880f, 880f, 0.035f, 0.35f);
         if (sonidoAcierto == null)
@@ -378,8 +406,8 @@ public class TabletSistemaVR : MonoBehaviour
             textoEstadoReporte.text = "Turno iniciado";
             textoEstadoReporte.color = colorVerdeSeleccionado;
         }
-        if (audioFeedback != null && sonidoAcierto != null)
-            audioFeedback.PlayOneShot(sonidoAcierto, 0.8f);
+        if (audioFeedback != null && sonidoClickUI != null)
+            audioFeedback.PlayOneShot(sonidoClickUI, 0.8f);
         EnviarHapticAmbosMandos(0.35f, 0.12f);
     }
 
@@ -545,11 +573,17 @@ public class TabletSistemaVR : MonoBehaviour
         }
 
         List<ObjetoAnomalia> inactivas = todasLasAnomalias.FindAll(a =>
-            a != null &&
-            !a.estaActiva &&
-            a.posiblesVariantes != null &&
-            a.posiblesVariantes.Count > 0 &&
-            !cuartosOcupados.Contains(a.nombreCuarto != null ? a.nombreCuarto.Trim() : ""));
+        {
+            if (a == null || a.estaActiva || a.posiblesVariantes == null || a.posiblesVariantes.Count == 0)
+                return false;
+            string nLow = a.gameObject.name.ToLowerInvariant();
+            bool seReubica = nLow.StartsWith("anomalia_flawed") || nLow.StartsWith("anomalia_pureform") ||
+                             nLow.StartsWith("anomalia_preacher") || nLow.StartsWith("anomalia_corpse") ||
+                             nLow.Contains("puertaabismal");
+            // Las entidades móviles eligen habitación desocupada al activarse, así que no bloquearlas por su cuarto anterior
+            if (seReubica) return cuartosOcupados.Count < 7;
+            return !cuartosOcupados.Contains(a.nombreCuarto != null ? a.nombreCuarto.Trim() : "");
+        });
 
         if (inactivas.Count == 0) return;
 
@@ -610,7 +644,8 @@ public class TabletSistemaVR : MonoBehaviour
             elegida = fallbackPool[UnityEngine.Random.Range(0, fallbackPool.Count)];
         }
 
-        elegida.ActivarAnomalia(tipoForzado);
+        // Activar anomalía con transición eléctrica suave (y micro-corte de 0.11s si por algún motivo extremo estuviera en línea de visión)
+        InterruptorLuz.EjecutarTransicionAparicionAnomalia(this, elegida, tipoForzado);
 
         tiempoActivacionPorAnomalia[elegida] = Time.time;
         if (!string.IsNullOrEmpty(elegida.nombreCuarto))
@@ -771,6 +806,19 @@ public class TabletSistemaVR : MonoBehaviour
         Color colorProcesando = new Color(1f, 0.85f, 0.32f, 1f);
         string[] puntos = new string[] { ".", "..", "...", ".", "..", "..." };
 
+        // Si el clip de procesando es la secuencia completa extraída (~1.9s), reproducirla en su AudioSource dedicado para nunca cortarse con clicks ni con Acierto/Fallo
+        AudioSource srcProc = audioProcesandoSource != null ? audioProcesandoSource : audioFeedback;
+        bool clipSecuenciaCompleta = sonidoProcesando != null && sonidoProcesando.length > 0.65f;
+        if (clipSecuenciaCompleta && srcProc != null)
+        {
+            srcProc.Stop();
+            srcProc.clip = sonidoProcesando;
+            srcProc.loop = false;
+            srcProc.volume = 0.76f;
+            srcProc.time = 0f;
+            srcProc.Play();
+        }
+
         for (int i = 0; i < puntos.Length; i++)
         {
             if (!disparoSitToStand && i == 1 && preMatch != null && preMatch.EsFlawedSentadoActivo())
@@ -790,18 +838,43 @@ public class TabletSistemaVR : MonoBehaviour
 
             if (i % 2 == 0)
             {
-                if (audioFeedback != null && sonidoProcesando != null)
-                    audioFeedback.PlayOneShot(sonidoProcesando, 0.5f);
+                if (!clipSecuenciaCompleta && srcProc != null && sonidoProcesando != null)
+                    srcProc.PlayOneShot(sonidoProcesando, 0.55f);
                 EnviarHapticPulso(0.12f, 0.05f);
             }
 
-            yield return new WaitForSeconds(disparoSitToStand ? 0.36f : 0.28f);
+            yield return new WaitForSeconds(disparoSitToStand ? 0.34f : 0.29f);
+        }
+
+        // Desvanecer suavemente el audio de procesando (0.16s) en vez de cortarlo en seco mientras entra el sonido de Acierto o Fallo
+        if (clipSecuenciaCompleta && srcProc != null && srcProc.isPlaying)
+        {
+            StartCoroutine(DesvanecerFuenteTablet(srcProc, 0.16f));
         }
 
         procesandoReporte = false;
         rutinaProcesando = null;
         ActualizarEstadoBotonPrincipal();
         EnviarReporteAlGestor(cuartoCongelado, tipoCongelado);
+    }
+
+    private static IEnumerator DesvanecerFuenteTablet(AudioSource src, float duracion)
+    {
+        if (src == null || !src.isPlaying) yield break;
+        float v0 = src.volume;
+        float t = 0f;
+        while (t < duracion && src != null && src.isPlaying)
+        {
+            t += Time.unscaledDeltaTime;
+            float p = Mathf.Clamp01(t / duracion);
+            src.volume = v0 * (0.5f * (1f + Mathf.Cos(p * Mathf.PI)));
+            yield return null;
+        }
+        if (src != null)
+        {
+            src.Stop();
+            src.volume = v0;
+        }
     }
 
     private void EnviarReporteAlGestor(string cuartoReporte, int tipoReporte)
@@ -990,8 +1063,17 @@ public class TabletSistemaVR : MonoBehaviour
         string estadoPrevio = textoEstadoReporte != null ? textoEstadoReporte.text : "";
         Color colorEstadoPrevio = textoEstadoReporte != null ? textoEstadoReporte.color : Color.white;
 
-        if (audioFeedback != null && sonidoGlitch != null)
-            audioFeedback.PlayOneShot(sonidoGlitch, 0.45f);
+        AudioSource srcGlitch = audioGlitchSource != null ? audioGlitchSource : audioFeedback;
+        if (srcGlitch != null && sonidoGlitch != null)
+        {
+            srcGlitch.Stop();
+            srcGlitch.clip = sonidoGlitch;
+            srcGlitch.loop = false;
+            srcGlitch.volume = 0.42f;
+            srcGlitch.time = 0f;
+            srcGlitch.Play();
+            StartCoroutine(DesvanecerGlitchTrasDuracion(srcGlitch, duracion + 0.12f, 0.22f));
+        }
         EnviarHapticPulso(0.18f, 0.08f);
 
         string[] textosCorruptos = new string[]
@@ -1039,6 +1121,28 @@ public class TabletSistemaVR : MonoBehaviour
             textoEstadoReporte.color = colorEstadoPrevio;
         }
         ActualizarRelojUI();
+    }
+
+    private static IEnumerator DesvanecerGlitchTrasDuracion(AudioSource src, float espera, float fade)
+    {
+        yield return new WaitForSecondsRealtime(espera);
+        if (src != null && src.isPlaying)
+        {
+            float v0 = src.volume;
+            float t = 0f;
+            while (t < fade && src != null && src.isPlaying)
+            {
+                t += Time.unscaledDeltaTime;
+                float p = Mathf.Clamp01(t / fade);
+                src.volume = v0 * (0.5f * (1f + Mathf.Cos(p * Mathf.PI)));
+                yield return null;
+            }
+            if (src != null)
+            {
+                src.Stop();
+                src.volume = v0;
+            }
+        }
     }
 
     private void ActualizarRelojUI()

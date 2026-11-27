@@ -14,7 +14,7 @@ using TMPro;
 [InitializeOnLoad]
 public class RepararPuertasVR : EditorWindow
 {
-    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v24.flag";
+    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v28.flag";
 
     static RepararPuertasVR()
     {
@@ -60,6 +60,18 @@ public class RepararPuertasVR : EditorWindow
         VentanasYLimitesVR.RestaurarPuertaLavanderiaFaltante();
         VentanasYLimitesVR.ConfigurarNocheOscuraReal();
         VentanasYLimitesVR.AsegurarCollidersMueblesTangibles();
+
+        // Cargar las rotaciones/posiciones/escalas 1:1 exactas de los 14 Light_switch desde House.fbx para revertir cualquier rotación horizontal previa
+        Dictionary<string, (Vector3 pos, Quaternion rot, Vector3 esc)> switchesOriginalesFBX = new Dictionary<string, (Vector3, Quaternion, Vector3)>(System.StringComparer.OrdinalIgnoreCase);
+        GameObject fbxHouseAsset = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Model/House.fbx");
+        if (fbxHouseAsset != null)
+        {
+            foreach (Transform tf in fbxHouseAsset.GetComponentsInChildren<Transform>(true))
+            {
+                if (tf != null && tf.name.StartsWith("Light_switch"))
+                    switchesOriginalesFBX[tf.name.Trim()] = (tf.localPosition, tf.localRotation, tf.localScale);
+            }
+        }
 
         Transform[] todos = Object.FindObjectsByType<Transform>(FindObjectsInactive.Include);
 
@@ -107,7 +119,7 @@ public class RepararPuertasVR : EditorWindow
             if (t == null || t.gameObject.scene.name == null) continue;
             string n = t.name.ToLowerInvariant();
 
-            if (n == "hitbox_vr" || n == "luz_real_cuarto")
+            if (n == "hitbox_vr" || n == "luz_real_cuarto" || n == "palanca_rocker_vr")
             {
                 Undo.DestroyObjectImmediate(t.gameObject);
                 continue;
@@ -136,6 +148,45 @@ public class RepararPuertasVR : EditorWindow
 
             if (esPuerta || esSwitch)
             {
+                if (esSwitch)
+                {
+                    // Revertir overrides de rotación en el Prefab House.fbx Y aplicar el transform original 1:1 para que los switches vuelvan a estar verticales sobre el muro
+                    Transform rockerHijo = t.Find("Palanca_Rocker_VR");
+                    if (rockerHijo != null)
+                        Undo.DestroyObjectImmediate(rockerHijo.gameObject);
+
+                    Undo.RecordObject(t, "Restaurar Transform Original Switch");
+                    SerializedObject soTr = new SerializedObject(t);
+                    SerializedProperty pRot = soTr.FindProperty("m_LocalRotation");
+                    SerializedProperty pEul = soTr.FindProperty("m_LocalEulerAnglesHint");
+                    SerializedProperty pPos = soTr.FindProperty("m_LocalPosition");
+                    SerializedProperty pEsc = soTr.FindProperty("m_LocalScale");
+                    if (pRot != null) PrefabUtility.RevertPropertyOverride(pRot, InteractionMode.AutomatedAction);
+                    if (pEul != null) PrefabUtility.RevertPropertyOverride(pEul, InteractionMode.AutomatedAction);
+                    if (pPos != null) PrefabUtility.RevertPropertyOverride(pPos, InteractionMode.AutomatedAction);
+                    if (pEsc != null) PrefabUtility.RevertPropertyOverride(pEsc, InteractionMode.AutomatedAction);
+
+                    if (switchesOriginalesFBX.TryGetValue(t.name.Trim(), out var origSw))
+                    {
+                        t.localPosition = origSw.pos;
+                        t.localRotation = origSw.rot;
+                        t.localScale = origSw.esc;
+                    }
+                    EditorUtility.SetDirty(t);
+
+                    InterruptorLuz swComp = t.GetComponent<InterruptorLuz>();
+                    if (swComp == null)
+                        swComp = Undo.AddComponent<InterruptorLuz>(t.gameObject);
+                    AudioClip clipSwReal = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/168860__orginaljun__light-switch-01.mp3");
+                    if (clipSwReal != null)
+                        swComp.clipSwitchReal = clipSwReal;
+                    swComp.ConfigurarColliderPositivoEInteractable();
+                    if (swComp.sonidoClick != null && clipSwReal != null)
+                        swComp.sonidoClick.clip = clipSwReal;
+                    EditorUtility.SetDirty(swComp);
+                    switchesCorregidos++;
+                    continue;
+                }
                 BoxCollider bcDirecto = t.GetComponent<BoxCollider>();
                 if (bcDirecto != null)
                 {
@@ -171,20 +222,12 @@ public class RepararPuertasVR : EditorWindow
 
                 Undo.RecordObject(bcPositivo, "Configurar BoxCollider Positivo");
                 bcPositivo.center = Vector3.zero;
-                if (esSwitch)
-                {
-                    bcPositivo.isTrigger = true;
-                    bcPositivo.size = new Vector3(0.24f, 0.24f, 0.24f);
-                }
-                else
-                {
-                    bcPositivo.isTrigger = false;
-                    bcPositivo.size = new Vector3(
-                        Mathf.Max(wb.size.x, 0.22f),
-                        Mathf.Max(wb.size.y, 0.40f),
-                        Mathf.Max(wb.size.z, 0.22f)
-                    );
-                }
+                bcPositivo.isTrigger = false;
+                bcPositivo.size = new Vector3(
+                    Mathf.Max(wb.size.x, 0.22f),
+                    Mathf.Max(wb.size.y, 0.40f),
+                    Mathf.Max(wb.size.z, 0.22f)
+                );
                 bcPositivo.enabled = true;
 
                 if (esPuerta)
@@ -261,21 +304,33 @@ public class RepararPuertasVR : EditorWindow
             bcCaja.center = new Vector3(0f, 0f, -0.3f);
 
             CajaFusiblesVR cf = cajaFusibles.GetComponent<CajaFusiblesVR>();
-            if (cf != null && cf.luzIndicadora != null)
+            if (cf != null)
             {
-                Undo.RecordObject(cf.luzIndicadora, "Atenuar LED Caja Fusibles");
-                cf.luzIndicadora.intensity = 0.35f;
-                cf.luzIndicadora.range = 0.85f;
-                EditorUtility.SetDirty(cf.luzIndicadora);
+                Undo.RecordObject(cf, "Asignar Fuse Box Klick");
+                AudioClip clipFuse = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-fuse-box-klick-106954.mp3");
+                if (clipFuse != null)
+                {
+                    cf.clipFuseBoxReal = clipFuse;
+                    if (cf.sonidoPalanca != null) cf.sonidoPalanca.clip = clipFuse;
+                }
+                if (cf.luzIndicadora != null)
+                {
+                    Undo.RecordObject(cf.luzIndicadora, "Atenuar LED Caja Fusibles");
+                    cf.luzIndicadora.intensity = 0.35f;
+                    cf.luzIndicadora.range = 0.85f;
+                    EditorUtility.SetDirty(cf.luzIndicadora);
+                }
+                EditorUtility.SetDirty(cf);
             }
         }
 
         // 5. Reemplazar los 5 Placeholders de Entidades por sus Modelos 3D Reales y Animarlos + Espejo Tulpa
         int entidadesModeladas = ActualizarModelos3DDeEntidades();
 
-        // 6. Hacer ventanas transparentes, construir barreras exteriores, configurar cajones/electrónicos y normalizar cuartos de anomalías
+        // 6. Hacer ventanas transparentes, construir barreras exteriores, colocar placas de Recámaras 1-3, configurar cajones/electrónicos y normalizar cuartos
         int ventanasTransparentes = VentanasYLimitesVR.HacerVentanasTransparentes();
         VentanasYLimitesVR.ConstruirBarrerasLimitesMapa();
+        VentanasYLimitesVR.ConstruirLetrerosHabitaciones();
         InteractorUniversalVR.AsegurarPuertasYSwitchesEnEscena();
 
         foreach (ObjetoAnomalia anom in Object.FindObjectsByType<ObjetoAnomalia>(FindObjectsInactive.Include))
@@ -319,15 +374,87 @@ public class RepararPuertasVR : EditorWindow
             EditorUtility.SetDirty(camLook);
         }
 
-        // 9. Asignar automáticamente audios sintetizados y ambientales de Fase 1 y Fase 2 a Tablet y Tensión VR
+        // 9. Importar y conectar los nuevos audios reales seleccionados (Switches, Teléfono, Susurros, Cajones, Electrodomésticos, TV, 3AM, Fusibles, Tablet y Victoria)
+        string[] rutasCortosDecompress = {
+            "Assets/Model/sonido/23newsound/168860__orginaljun__light-switch-01.mp3",
+            "Assets/Model/sonido/23newsound/Telefono.mp3",
+            "Assets/Model/sonido/23newsound/freesound_community-drawer-41055.mp3",
+            "Assets/Model/sonido/23newsound/glitchstarting.mp3",
+            "Assets/Model/sonido/freesound_community-fuse-box-klick-106954.mp3",
+            "Assets/Model/sonido/freesound_community-fridge-hum-and-door-68902.mp3",
+            "Assets/Model/sonido/freesound_community-microwave-door-open-90798.mp3",
+            "Assets/Model/sonido/freesound_community-door-washing-machine-94161.mp3",
+            "Assets/Model/sonido/freesound_community-opening-closing-cabinet-door-101970.mp3",
+            "Assets/Model/sonido/yourugor-tv-static-noise-291374.mp3",
+            "Assets/Model/sonido/sfx_tablet_acierto.wav",
+            "Assets/Model/sonido/sfx_tablet_procesando.wav",
+            "Assets/Model/sonido/sfx_tablet_fallo.wav",
+            "Assets/Model/sonido/sfx_victoria_6am.wav"
+        };
+        foreach (string rCorto in rutasCortosDecompress)
+        {
+            if (!File.Exists(rCorto)) continue;
+            AssetDatabase.ImportAsset(rCorto, ImportAssetOptions.ForceUpdate);
+            AudioImporter aiC = AssetImporter.GetAtPath(rCorto) as AudioImporter;
+            if (aiC != null)
+            {
+                AudioImporterSampleSettings s = aiC.defaultSampleSettings;
+                if (s.loadType != AudioClipLoadType.DecompressOnLoad)
+                {
+                    s.loadType = AudioClipLoadType.DecompressOnLoad;
+                    aiC.defaultSampleSettings = s;
+                    aiC.SaveAndReimport();
+                }
+            }
+        }
+
+        string[] rutasLargos = {
+            "Assets/Model/sonido/23newsound/whispering-voices-background.mp3",
+            "Assets/Model/sonido/23newsound/heartbeat-fx.mp3",
+            "Assets/Model/sonido/23newsound/tic-tac-emilly.mp3",
+            "Assets/Model/sonido/homarov-hell-sounds-12417.mp3",
+            "Assets/Model/sonido/sfx_preacher_original.wav"
+        };
+        foreach (string rLargo in rutasLargos)
+        {
+            if (File.Exists(rLargo))
+                AssetDatabase.ImportAsset(rLargo, ImportAssetOptions.ForceUpdate);
+        }
+
+        AudioClip clipDrawerReal = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/freesound_community-drawer-41055.mp3");
+        AudioClip clipFridgeReal = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-fridge-hum-and-door-68902.mp3");
+        AudioClip clipMicroReal  = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-microwave-door-open-90798.mp3");
+        AudioClip clipWashReal   = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-door-washing-machine-94161.mp3");
+        AudioClip clipCabReal    = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-opening-closing-cabinet-door-101970.mp3");
+        AudioClip clipTvStatReal = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/yourugor-tv-static-noise-291374.mp3");
+
+        foreach (InteractivoMuebleYElectronicoVR me in Object.FindObjectsByType<InteractivoMuebleYElectronicoVR>(FindObjectsInactive.Include))
+        {
+            if (me == null) continue;
+            Undo.RecordObject(me, "Asignar Sonidos Reales Muebles y Electrodomesticos");
+            if (clipDrawerReal != null) me.clipCajonReal = clipDrawerReal;
+            if (clipFridgeReal != null) me.clipRefrigerador = clipFridgeReal;
+            if (clipMicroReal != null)  me.clipMicroondas = clipMicroReal;
+            if (clipWashReal != null)   me.clipLavadora = clipWashReal;
+            if (clipCabReal != null)    me.clipGabinete = clipCabReal;
+            if (clipTvStatReal != null) me.clipEstaticaTV = clipTvStatReal;
+            EditorUtility.SetDirty(me);
+        }
+
         TabletSistemaVR tablet = Object.FindAnyObjectByType<TabletSistemaVR>(FindObjectsInactive.Include);
         if (tablet != null)
         {
-            Undo.RecordObject(tablet, "Asignar Audios Fase 1 y 2 Tablet");
-            AudioClip clipProc = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_tablet_procesando.wav");
-            AudioClip clipGlitch = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_glitch_tablet.wav");
-            if (clipProc != null) tablet.sonidoProcesando = clipProc;
-            if (clipGlitch != null) tablet.sonidoGlitch = clipGlitch;
+            Undo.RecordObject(tablet, "Asignar Audios Reales Tablet");
+            AudioClip clipAcierto = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_tablet_acierto.wav");
+            AudioClip clipProc    = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_tablet_procesando.wav");
+            AudioClip clipFallo   = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_tablet_fallo.wav");
+            AudioClip clipGlitch  = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/glitchstarting.mp3");
+            if (clipGlitch == null)
+                clipGlitch = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_glitch_tablet.wav");
+            if (clipAcierto != null) tablet.sonidoAcierto = clipAcierto;
+            if (clipProc != null)    tablet.sonidoProcesando = clipProc;
+            if (clipFallo != null)   tablet.sonidoFallo = clipFallo;
+            if (clipGlitch != null)  tablet.sonidoGlitch = clipGlitch;
             EditorUtility.SetDirty(tablet);
         }
 
@@ -340,11 +467,19 @@ public class RepararPuertasVR : EditorWindow
         }
         if (tension != null)
         {
-            Undo.RecordObject(tension, "Asignar Audios Tension y Paranoia VR");
-            AudioClip clipLatido = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_latido_corazon.wav");
+            Undo.RecordObject(tension, "Asignar Audios Tension, 3AM y Paranoia VR");
+            AudioClip clipLatido = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/heartbeat-fx.mp3");
+            if (clipLatido == null)
+                clipLatido = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_latido_corazon.wav");
+            AudioClip clipSusurros = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/whispering-voices-background.mp3");
+            AudioClip clipTicTac = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/tic-tac-emilly.mp3");
+            AudioClip clipHell3AM = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/homarov-hell-sounds-12417.mp3");
             AudioClip clipViento = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-wind-ambience-14720.mp3");
             AudioClip clipGolpe = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/soumages-walking-on-wood-363349.mp3");
             if (clipLatido != null) tension.clipLatidoCorazon = clipLatido;
+            if (clipSusurros != null) tension.clipVocesSusurros = clipSusurros;
+            if (clipTicTac != null) tension.clipTicTacHoraMuerta = clipTicTac;
+            if (clipHell3AM != null) tension.clipSonido3AM = clipHell3AM;
             if (clipViento != null) tension.clipVientoVentana = clipViento;
             // NUNCA asignar audio de abrir puerta a paranoia ambiental para evitar falsas alarmas de puerta
             tension.clipCrujidoMadera = null;
@@ -363,6 +498,7 @@ public class RepararPuertasVR : EditorWindow
         if (finalTurno != null)
         {
             string[] rutasDeathScreenWav = {
+                "Assets/Model/sonido/sfx_screamer_anomalia.wav",
                 "Assets/Model/sonido/sfx_deathscreen_vhs_alarm.wav",
                 "Assets/Model/sonido/sfx_deathscreen_flatline.wav"
             };
@@ -410,6 +546,12 @@ public class RepararPuertasVR : EditorWindow
         }
         if (bloque1 != null)
         {
+            Undo.RecordObject(bloque1, "Asignar Telefono Analogo, TicTac Reloj y Estatica TV");
+            AudioClip clipTelAnalogo = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/Telefono.mp3");
+            AudioClip clipTicTacReloj = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/tic-tac-emilly.mp3");
+            if (clipTelAnalogo != null) bloque1.clipTelefonoAnalogo = clipTelAnalogo;
+            if (clipTicTacReloj != null) bloque1.clipTicTacReloj = clipTicTacReloj;
+            if (clipTvStatReal != null) bloque1.clipEstaticaTV = clipTvStatReal;
             bloque1.InicializarTodoBloque1();
             EditorUtility.SetDirty(bloque1);
         }
@@ -716,9 +858,13 @@ public class RepararPuertasVR : EditorWindow
                 clips[i].lockRootRotation = true;
                 clips[i].lockRootPositionXZ = true;
                 clips[i].lockRootHeightY = bloquearAlturaY;
+                // CRÍTICO: Anclar la raíz Y en los PIES (heightFromFeet = true) y NUNCA en Center of Mass,
+                // evitando al 100% que Flawed, PureForm o Tulpa se hundan ~0.8m a través del piso hacia la Cocina abajo!
+                clips[i].heightFromFeet = true;
+                clips[i].heightOffset = 0f;
                 clips[i].keepOriginalOrientation = false;
                 clips[i].keepOriginalPositionXZ = false;
-                clips[i].keepOriginalPositionY = !bloquearAlturaY;
+                clips[i].keepOriginalPositionY = false;
             }
         }
         mi.clipAnimations = clips;
@@ -955,7 +1101,10 @@ public class RepararPuertasVR : EditorWindow
             contador++;
         }
 
-        // 2. PREACHER (MONJE) -> Nuevo modelo Blender Preacher_Monje.fbx estilo Mandela Catalogue / Alternate Watch
+        // 2. PREACHER (MONJE) -> Modelo Preacher_Monje.fbx + audio original extraído a bajo volumen con atenuación espacial por cuarto
+        if (File.Exists("Assets/Model/sonido/sfx_preacher_original.wav"))
+            AssetDatabase.ImportAsset("Assets/Model/sonido/sfx_preacher_original.wav", ImportAssetOptions.ForceUpdate);
+        AudioClip clipPreacherOrig = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/sfx_preacher_original.wav");
         if (ReemplazarVisualEntidad(
             "Anomalia_Preacher_Closet",
             "Assets/Model/Props/Generados/Preacher_Monje.fbx",
@@ -964,7 +1113,7 @@ public class RepararPuertasVR : EditorWindow
             TipoAnomalia.Preacher,
             alturaDeseada: 1.88f,
             acostadoEnSuelo: false,
-            clipAudio: null))
+            clipAudio: clipPreacherOrig))
         {
             contador++;
         }
@@ -1458,12 +1607,21 @@ public class RepararPuertasVR : EditorWindow
                     AudioSource aud = ancla.GetComponent<AudioSource>();
                     if (aud == null) aud = Undo.AddComponent<AudioSource>(ancla);
                     aud.clip = clipAudio;
-                    aud.playOnAwake = false;
-                    aud.spatialBlend = 1f;
-                    aud.volume = 0.45f;
-                    aud.pitch = 0.82f;
-                    aud.minDistance = 1.0f;
-                    aud.maxDistance = 10.0f;
+                    if (tipo == TipoAnomalia.Preacher)
+                    {
+                        ObjetoAnomalia.ConfigurarAudioEspacialPreacher(aud);
+                        aud.pitch = 1.0f;
+                        aud.volume = 0f;
+                    }
+                    else
+                    {
+                        aud.playOnAwake = false;
+                        aud.spatialBlend = 1f;
+                        aud.volume = 0.45f;
+                        aud.pitch = 0.82f;
+                        aud.minDistance = 1.0f;
+                        aud.maxDistance = 10.0f;
+                    }
                     v.audioEvento = aud;
                     v.sonidoEnBucle = (tipo == TipoAnomalia.Preacher);
                 }
