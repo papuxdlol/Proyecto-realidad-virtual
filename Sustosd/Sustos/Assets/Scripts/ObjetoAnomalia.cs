@@ -115,28 +115,84 @@ public class ObjetoAnomalia : MonoBehaviour
         public Quaternion rotSentado;
     }
 
+    private struct InfoVentanaExteriorFlawed
+    {
+        public string cuarto;
+        public Vector3 posCristalInterior;
+        public Vector3 posExteriorEntidad;
+        public Quaternion rotMirandoAdentro;
+    }
+
     private static bool cacheMueblesContextualesListo = false;
     private static readonly Dictionary<string, InfoCamaCasa> cacheCamasPorCuarto = new Dictionary<string, InfoCamaCasa>(System.StringComparer.OrdinalIgnoreCase);
     private static readonly List<InfoAsientoCasa> cacheAsientosFlawed = new List<InfoAsientoCasa>();
+    private static readonly List<InfoVentanaExteriorFlawed> cacheVentanasExterioresFlawed = new List<InfoVentanaExteriorFlawed>();
     private static MeshRenderer cacheBathtubCasaArriba;
     private static readonly Dictionary<string, MeshRenderer> cacheCoberturaPureForm = new Dictionary<string, MeshRenderer>(System.StringComparer.OrdinalIgnoreCase);
 
     private MeshRenderer bathtubCasaOcultadaPorCorpse;
     private bool flawedSentadoActivoActual = false;
+    private bool flawedVentanaActivoActual = false;
+    private Light luzContraluzVentanaFlawed;
+
+    public bool EnReaccionReportePreEliminacion { get; private set; } = false;
 
     public bool EsFlawedSentadoActivo()
     {
         return estaActiva && tipoActivoActual == TipoAnomalia.Flawed && flawedSentadoActivoActual;
     }
 
+    public bool EsFlawedVentanaActivo()
+    {
+        return estaActiva && tipoActivoActual == TipoAnomalia.Flawed && flawedVentanaActivoActual;
+    }
+
+    public bool TieneReaccionPreEliminacionPorReporte()
+    {
+        return estaActiva &&
+               (tipoActivoActual == TipoAnomalia.Flawed ||
+                tipoActivoActual == TipoAnomalia.PureForm ||
+                tipoActivoActual == TipoAnomalia.Tulpa);
+    }
+
     public void DispararSitToStandPorReporte()
     {
-        if (!EsFlawedSentadoActivo()) return;
+        DispararReaccionPreEliminacionPorReporte();
+    }
+
+    public void DispararReaccionPreEliminacionPorReporte()
+    {
+        if (!TieneReaccionPreEliminacionPorReporte()) return;
+        EnReaccionReportePreEliminacion = true;
+
         Transform vis = transform.Find("Modelo_Visual_(Reemplazar_Por_FBX)");
-        if (vis == null) return;
-        AnimadorEntidadTerror anim = vis.GetComponent<AnimadorEntidadTerror>();
-        if (anim != null)
-            anim.DispararSitToStandPorReporte();
+        if (vis != null)
+        {
+            AnimadorEntidadTerror anim = vis.GetComponent<AnimadorEntidadTerror>();
+            if (anim != null)
+                anim.DispararReaccionPorReporte();
+        }
+
+        if (tipoActivoActual == TipoAnomalia.PureForm && TensionYAmbienteVR.Instancia != null)
+        {
+            TensionYAmbienteVR.Instancia.DispararPulsoGlitchPantallaCompleta(2.45f, 0.92f);
+        }
+        else if (tipoActivoActual == TipoAnomalia.Tulpa)
+        {
+            EspejoTulpaVR[] espejos = FindObjectsByType<EspejoTulpaVR>(FindObjectsInactive.Exclude);
+            for (int i = 0; i < espejos.Length; i++)
+            {
+                EspejoTulpaVR esp = espejos[i];
+                if (esp == null) continue;
+                esp.DispararReaccionReporteEnEspejo(2.40f);
+                if (esp.modeloTulpaReflejado != null)
+                {
+                    AnimadorEntidadTerror animRef = esp.modeloTulpaReflejado.GetComponent<AnimadorEntidadTerror>();
+                    if (animRef != null)
+                        animRef.DispararReaccionPorReporte();
+                }
+            }
+        }
     }
 
     private struct PuntoClosetPreacher
@@ -1001,6 +1057,7 @@ public class ObjetoAnomalia : MonoBehaviour
 
         tipoActivoActual = varianteActual.tipo;
         estaActiva = true;
+        EnReaccionReportePreEliminacion = false;
 
         // 0. Si es una entidad humanoide móvil (Flawed, PureForm, Preacher, Corpse) o el Mensaje en la Pared,
         // aparecer dinámicamente en CUALQUIER habitación de la casa (excepto Tulpa, que es exclusiva de espejos)
@@ -1038,7 +1095,13 @@ public class ObjetoAnomalia : MonoBehaviour
 
         // 3. ¿Aparece un clon o entidad? (Mimic, Entidades, Tulpa, Corpse, Unknown)
         if (varianteActual.objetoExtraActivable != null)
+        {
+            if (tipoActivoActual == TipoAnomalia.Mimic)
+            {
+                PosicionarClonMimicSinClipping(varianteActual.objetoExtraActivable);
+            }
             varianteActual.objetoExtraActivable.SetActive(true);
+        }
 
         // 4. ¿Cambia la textura de un cuadro o TV? (Imagery / Electrical)
         if (varianteActual.rendererCuadroOTV != null)
@@ -1152,6 +1215,9 @@ public class ObjetoAnomalia : MonoBehaviour
     {
         Transform cam = Camera.main != null ? Camera.main.transform : null;
         flawedSentadoActivoActual = false;
+        flawedVentanaActivoActual = false;
+        if (luzContraluzVentanaFlawed != null)
+            luzContraluzVentanaFlawed.enabled = false;
 
         // Restricción estricta para el Monje (Preacher): SOLO aparece en habitaciones con Closets y fuera de la vista del jugador
         if (tipo == TipoAnomalia.Preacher)
@@ -1230,6 +1296,7 @@ public class ObjetoAnomalia : MonoBehaviour
             int idxElegido = 0;
             bool elegirSentado = false;
             bool elegirEspaldas = false;
+            bool elegirVentana = false;
 
             if (visualFlawed != null && visualFlawed.childCount > 0)
             {
@@ -1245,13 +1312,79 @@ public class ObjetoAnomalia : MonoBehaviour
                     ch.SetActive(activo);
                     if (activo)
                     {
-                        // Variante 3 = Flawed_04_HombreTraje (SIEMPRE sentado en sofá/sillón/silla real como en el juego original!)
+                        string cn = ch.name.ToLowerInvariant();
+                        // Variante 3 = Flawed_04_HombreTraje (SIEMPRE sentado en sofá/sillón/silla real)
                         // Variante 4 = Flawed_05_CabezaGirada (cuerpo de espaldas con cabeza girada 180°)
-                        elegirSentado = (i == 3) || ch.name.ToLowerInvariant().Contains("traje");
-                        elegirEspaldas = (i == 4) || ch.name.ToLowerInvariant().Contains("cabezagirada");
+                        // Variante 5 = Flawed_06_Ventana (EXCLUSIVO afuera de las ventanas exteriores mirando hacia adentro!)
+                        elegirSentado = (i == 3) || cn.Contains("traje");
+                        elegirEspaldas = (i == 4) || cn.Contains("cabezagirada");
+                        elegirVentana = (i == 5) || cn.Contains("ventana");
                     }
                 }
                 AplicarMaterialesMateFlawed(visualFlawed);
+            }
+
+            // Si salió el Flawed de Ventana (Flawed_06_Ventana), colocarlo EXCLUSIVAMENTE en el exterior de una ventana de la casa mirando hacia adentro
+            if (elegirVentana && cacheVentanasExterioresFlawed.Count > 0)
+            {
+                List<InfoVentanaExteriorFlawed> ventsLibres = new List<InfoVentanaExteriorFlawed>();
+                for (int i = 0; i < cacheVentanasExterioresFlawed.Count; i++)
+                {
+                    if (!CuartoTieneOtraAnomaliaActiva(cacheVentanasExterioresFlawed[i].cuarto, this) &&
+                        !PuntoVisibleOMismoCuartoJugador(cam, cacheVentanasExterioresFlawed[i].posCristalInterior, cacheVentanasExterioresFlawed[i].cuarto))
+                        ventsLibres.Add(cacheVentanasExterioresFlawed[i]);
+                }
+                if (ventsLibres.Count == 0)
+                {
+                    for (int i = 0; i < cacheVentanasExterioresFlawed.Count; i++)
+                    {
+                        if (!PuntoVisibleOMismoCuartoJugador(cam, cacheVentanasExterioresFlawed[i].posCristalInterior, cacheVentanasExterioresFlawed[i].cuarto))
+                            ventsLibres.Add(cacheVentanasExterioresFlawed[i]);
+                    }
+                }
+                if (ventsLibres.Count == 0)
+                    ventsLibres.AddRange(cacheVentanasExterioresFlawed);
+
+                InfoVentanaExteriorFlawed vent = ventsLibres[Random.Range(0, ventsLibres.Count)];
+                nombreCuarto = vent.cuarto;
+                flawedVentanaActivoActual = true;
+
+                transform.position = vent.posExteriorEntidad;
+                transform.rotation = vent.rotMirandoAdentro;
+
+                // Luz lunar fría muy tenue afuera del cristal para recortar su rostro hueco tras la ventana nocturna
+                if (luzContraluzVentanaFlawed == null)
+                {
+                    Transform lt = transform.Find("Luz_Contraluz_Ventana_Flawed");
+                    if (lt == null)
+                    {
+                        GameObject goL = new GameObject("Luz_Contraluz_Ventana_Flawed");
+                        goL.transform.SetParent(transform, false);
+                        luzContraluzVentanaFlawed = goL.AddComponent<Light>();
+                    }
+                    else
+                    {
+                        luzContraluzVentanaFlawed = lt.GetComponent<Light>();
+                    }
+                    luzContraluzVentanaFlawed.type = LightType.Point;
+                    luzContraluzVentanaFlawed.color = new Color(0.66f, 0.75f, 0.92f, 1f);
+                    luzContraluzVentanaFlawed.intensity = 1.25f;
+                    luzContraluzVentanaFlawed.range = 2.1f;
+                    luzContraluzVentanaFlawed.shadows = LightShadows.None;
+                }
+                luzContraluzVentanaFlawed.transform.localPosition = new Vector3(0f, 1.54f, 0.16f);
+                luzContraluzVentanaFlawed.enabled = true;
+
+                if (visualFlawed != null)
+                {
+                    AnimadorEntidadTerror animFlawed = visualFlawed.GetComponent<AnimadorEntidadTerror>();
+                    if (animFlawed != null)
+                    {
+                        animFlawed.GuardarTransformBase();
+                        animFlawed.ConfigurarModoVarianteFlawed(false, false, esVentana: true);
+                    }
+                }
+                return;
             }
 
             // Si salió el Hombre de Traje (Flawed_04), sentarlo sobre una silla, sillón o sofá real fuera de la vista del jugador
@@ -1289,7 +1422,7 @@ public class ObjetoAnomalia : MonoBehaviour
                     if (animFlawed != null)
                     {
                         animFlawed.GuardarTransformBase();
-                        animFlawed.ConfigurarModoVarianteFlawed(true, false);
+                        animFlawed.ConfigurarModoVarianteFlawed(true, false, false);
                     }
                 }
                 return;
@@ -1301,7 +1434,7 @@ public class ObjetoAnomalia : MonoBehaviour
                 if (animFlawed != null)
                 {
                     animFlawed.GuardarTransformBase();
-                    animFlawed.ConfigurarModoVarianteFlawed(false, elegirEspaldas);
+                    animFlawed.ConfigurarModoVarianteFlawed(false, elegirEspaldas, false);
                 }
             }
         }
@@ -1349,6 +1482,7 @@ public class ObjetoAnomalia : MonoBehaviour
 
         cacheCamasPorCuarto.Clear();
         cacheAsientosFlawed.Clear();
+        cacheVentanasExterioresFlawed.Clear();
         cacheCoberturaPureForm.Clear();
         cacheBathtubCasaArriba = null;
 
@@ -1363,6 +1497,34 @@ public class ObjetoAnomalia : MonoBehaviour
 
             Bounds b = mr.bounds;
             string cuartoMueble = NormalizarCuartoPorPosicion(b.center, "");
+
+            // Detectar cristales de ventanas EXTERIORES reales para la 6ta variante Flawed_06_Ventana (excluyendo mamparas de regadera y cristales pequeños)
+            if (nl.StartsWith("glass") && !nl.Contains("shower") && !nl.Contains("table") && !nl.Contains("cup") && !nl.Contains("door") && b.size.y >= 0.80f && Mathf.Max(b.size.x, b.size.z) >= 0.65f)
+            {
+                bool orientadaEnX = b.size.x < b.size.z;
+                Vector3 centroCasa = new Vector3(15.6f, b.center.y, -4.2f);
+                Vector3 haciaAfuera = orientadaEnX
+                    ? new Vector3(Mathf.Sign(b.center.x - centroCasa.x), 0f, 0f)
+                    : new Vector3(0f, 0f, Mathf.Sign(b.center.z - centroCasa.z));
+                if (haciaAfuera.sqrMagnitude < 0.01f) haciaAfuera = Vector3.forward;
+                haciaAfuera.Normalize();
+
+                Vector3 puntoInterior = b.center - haciaAfuera * 0.85f;
+                string cuartoVent = NormalizarCuartoPorPosicion(puntoInterior, "LivingRoom");
+                if (cuartoVent != "Bathroom")
+                {
+                    // Alinear el torso y el rostro hueco (+1.48m desde la base del modelo) justo al centro vertical del cristal de la ventana
+                    float posYEntidad = Mathf.Min(b.center.y - 1.38f, b.max.y - 1.72f);
+                    Vector3 posExt = new Vector3(b.center.x, posYEntidad, b.center.z) + haciaAfuera * 0.23f;
+                    cacheVentanasExterioresFlawed.Add(new InfoVentanaExteriorFlawed
+                    {
+                        cuarto = cuartoVent,
+                        posCristalInterior = puntoInterior,
+                        posExteriorEntidad = posExt,
+                        rotMirandoAdentro = Quaternion.LookRotation(-haciaAfuera, Vector3.up)
+                    });
+                }
+            }
 
             // Detectar sillones y sillas interiores reales (Sala, Cocina/Comedor y Recámaras) para el Hombre de Traje sentado
             bool esSillonSala = (nl == "armchair_15.001" || nl == "armchair_17.001") && cuartoMueble == "LivingRoom";
@@ -2282,8 +2444,19 @@ public class ObjetoAnomalia : MonoBehaviour
 
         if (v.moverPosicion != Vector3.zero)
         {
-            // Calcular desplazamiento claramente visible (0.48m a 0.72m) hacia el centro despejado de la habitación
-            // para que nunca se mueva solo 2-7 cm ni atraviese muros o estantes (Anti-Clipping)
+            // Calcular desplazamiento claramente visible hacia zona despejada sin atravesar muros, suelos ni otros muebles/objetos (Anti-Clipping + Soporte real)
+            Bounds bOrig = miRenderer != null ? miRenderer.bounds : new Bounds(transform.position, Vector3.one * 0.24f);
+            float pisoCuarto = ObtenerAlturaPisoSegura(centroVisual, nombreCuarto);
+            string nLower = gameObject.name.ToLowerInvariant();
+            bool esObjetoDeEstante = nLower.StartsWith("box") || nLower.StartsWith("paint_pot") || nLower.StartsWith("petrol_can") || nLower.StartsWith("toolbox");
+            bool sobreSuperficieElevada = (bOrig.min.y - pisoCuarto) > 0.25f && !esObjetoDeEstante;
+
+            bool puedeLevitar = v.tipo == TipoAnomalia.Displacement &&
+                                !nLower.Contains("door") &&
+                                !nLower.Contains("drawer") &&
+                                !nLower.Contains("cuadro") &&
+                                ((v.nombreDescriptivo != null && v.nombreDescriptivo.ToLowerInvariant().Contains("levita")) || Random.value < 0.28f);
+
             Vector3 centroCuarto = ObtenerCentroDeHabitacion(nombreCuarto);
             Vector3 dirHaciaCentro = new Vector3(centroCuarto.x - centroVisual.x, 0f, centroCuarto.z - centroVisual.z);
             if (dirHaciaCentro.sqrMagnitude < 0.01f)
@@ -2292,69 +2465,209 @@ public class ObjetoAnomalia : MonoBehaviour
                 dirHaciaCentro = Vector3.forward;
             dirHaciaCentro.Normalize();
 
-            float distObjetivo = Mathf.Clamp(new Vector2(v.moverPosicion.x, v.moverPosicion.z).magnitude * 3.2f, 0.48f, 0.72f);
-
-            // Verificar que no haya pared/obstáculo en esa dirección; si lo hay, invertir o usar la dirección hacia el centro del cuarto
+            Vector3 lat = Vector3.Cross(Vector3.up, dirHaciaCentro).normalized;
             Vector3[] candidatosDir = new Vector3[]
             {
                 dirHaciaCentro,
-                Vector3.Cross(Vector3.up, dirHaciaCentro).normalized,
-                -Vector3.Cross(Vector3.up, dirHaciaCentro).normalized,
+                lat,
+                -lat,
+                (dirHaciaCentro + lat).normalized,
+                (dirHaciaCentro - lat).normalized,
                 -dirHaciaCentro
             };
 
-            Vector3 dirSegura = dirHaciaCentro;
-            float distSegura = distObjetivo;
-
-            foreach (Vector3 d in candidatosDir)
-            {
-                if (!Physics.Raycast(centroVisual, d, out RaycastHit hit, distObjetivo + 0.20f, ~0, QueryTriggerInteraction.Ignore))
-                {
-                    dirSegura = d;
-                    distSegura = distObjetivo;
-                    break;
-                }
-                else if (hit.distance > 0.35f)
-                {
-                    dirSegura = d;
-                    distSegura = hit.distance - 0.15f;
-                    break;
-                }
-            }
-
-            Vector3 nuevoDestino = transform.position + dirSegura * distSegura;
-
-            // Si es una caja, bote de pintura o bidón en un estante alto (ej. Garaje o Lavandería), bajarlo al suelo frente al estante
-            // y volcarlo ligeramente para que el jugador identifique al instante qué objeto se desplazó
-            string nLower = gameObject.name.ToLowerInvariant();
-            bool esObjetoDeEstante = nLower.StartsWith("box") || nLower.StartsWith("paint_pot") || nLower.StartsWith("petrol_can") || nLower.StartsWith("toolbox");
-            bool puedeLevitar = v.tipo == TipoAnomalia.Displacement &&
-                                !nLower.Contains("door") &&
-                                !nLower.Contains("drawer") &&
-                                !nLower.Contains("cuadro") &&
-                                ((v.nombreDescriptivo != null && v.nombreDescriptivo.ToLowerInvariant().Contains("levita")) || Random.value < 0.30f);
+            Vector3 halfExtents = Vector3.Max(bOrig.extents * 0.84f, new Vector3(0.06f, 0.04f, 0.06f));
+            Vector3 offsetPivoteACentro = bOrig.center - transform.position;
+            float distObjetivo = sobreSuperficieElevada
+                ? Mathf.Clamp(Mathf.Max(bOrig.size.x, bOrig.size.z) + 0.18f, 0.24f, 0.44f)
+                : Mathf.Clamp(new Vector2(v.moverPosicion.x, v.moverPosicion.z).magnitude * 3.2f, 0.46f, 0.68f);
 
             if (puedeLevitar)
             {
-                float pisoCuarto = centroVisual.y > 3.15f ? 3.74f : (nombreCuarto == "Garage" ? 0.16f : 0.41f);
-                posBaseLevitacion = new Vector3(nuevoDestino.x, pisoCuarto + Random.Range(0.85f, 1.18f), nuevoDestino.z);
+                Vector3 dirLev = dirHaciaCentro;
+                float distLev = 0.36f;
+                for (int i = 0; i < candidatosDir.Length; i++)
+                {
+                    Vector3 candCentro = new Vector3(bOrig.center.x, pisoCuarto + 1.02f, bOrig.center.z) + candidatosDir[i] * 0.38f;
+                    if (!Physics.Raycast(new Vector3(bOrig.center.x, pisoCuarto + 1.02f, bOrig.center.z), candidatosDir[i], 0.55f, ~0, QueryTriggerInteraction.Ignore) &&
+                        EsEspacioLibreDeObstaculos(candCentro, halfExtents, transform, null, -999f))
+                    {
+                        dirLev = candidatosDir[i];
+                        break;
+                    }
+                }
+                Vector3 destXZ = transform.position + dirLev * distLev;
+                posBaseLevitacion = new Vector3(destXZ.x, pisoCuarto + Random.Range(0.88f, 1.16f), destXZ.z);
                 transform.position = posBaseLevitacion;
                 transform.rotation = transform.rotation * Quaternion.Euler(18f, 35f, -14f);
                 enLevitacionDisplacement = true;
+                return;
             }
-            else if (esObjetoDeEstante)
+
+            // 1. Si está sobre una mesa/encimera/buró, intentar primero desplazarlo sobre la MISMA superficie sin quedar flotando en el aire ni chocar con otros props
+            if (sobreSuperficieElevada)
             {
-                float pisoCuarto = centroVisual.y > 3.15f ? 3.74f : (nombreCuarto == "Garage" ? 0.16f : 0.41f);
-                float mitadAlto = miRenderer != null ? miRenderer.bounds.extents.y : 0.15f;
-                nuevoDestino.y = pisoCuarto + mitadAlto;
-                transform.position = nuevoDestino;
-                transform.RotateAround(miRenderer != null ? miRenderer.bounds.center : transform.position, dirSegura, 28f);
+                float[] escalasDistMesa = { 1.0f, 0.65f };
+                for (int e = 0; e < escalasDistMesa.Length; e++)
+                {
+                    float dPrueba = distObjetivo * escalasDistMesa[e];
+                    for (int i = 0; i < candidatosDir.Length; i++)
+                    {
+                        Vector3 d = candidatosDir[i];
+                        Vector3 candCentro = bOrig.center + d * dPrueba;
+                        if (Physics.Raycast(new Vector3(candCentro.x, bOrig.max.y + 0.10f, candCentro.z), Vector3.down, out RaycastHit hitSup, 0.65f, ~0, QueryTriggerInteraction.Ignore))
+                        {
+                            if (hitSup.collider != null && !hitSup.collider.transform.IsChildOf(transform) &&
+                                Mathf.Abs(hitSup.point.y - bOrig.min.y) <= 0.065f)
+                            {
+                                Vector3 centroAjustado = new Vector3(candCentro.x, hitSup.point.y + bOrig.extents.y + 0.004f, candCentro.z);
+                                if (EsEspacioLibreDeObstaculos(centroAjustado, halfExtents, transform, hitSup.collider.transform, hitSup.point.y))
+                                {
+                                    transform.position = centroAjustado - offsetPivoteACentro;
+                                    transform.RotateAround(centroAjustado, Vector3.up, 26f);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            else
+
+            // 2. Colocar en espacio despejado sobre el piso real de la habitación (ya sea mueble de suelo, caja de estante o prop tirado frente a su mesa)
+            float distPisoBase = (esObjetoDeEstante || sobreSuperficieElevada) ? 0.56f : distObjetivo;
+            float[] distanciasPiso = { distPisoBase, 0.40f, 0.72f };
+            for (int dp = 0; dp < distanciasPiso.Length; dp++)
             {
-                transform.position = nuevoDestino;
+                float distActual = distanciasPiso[dp];
+                for (int i = 0; i < candidatosDir.Length; i++)
+                {
+                    Vector3 d = candidatosDir[i];
+                    if (Physics.Raycast(new Vector3(bOrig.center.x, pisoCuarto + 0.55f, bOrig.center.z), d, distActual + halfExtents.x + 0.12f, ~0, QueryTriggerInteraction.Ignore))
+                        continue;
+
+                    Vector3 candXZ = bOrig.center + d * distActual;
+                    float ySuelo = ObtenerAlturaPisoSegura(new Vector3(candXZ.x, pisoCuarto + 0.2f, candXZ.z), nombreCuarto);
+                    Vector3 centroEnSuelo = new Vector3(candXZ.x, ySuelo + bOrig.extents.y + 0.005f, candXZ.z);
+
+                    if (EsEspacioLibreDeObstaculos(centroEnSuelo, halfExtents, transform, null, ySuelo))
+                    {
+                        transform.position = centroEnSuelo - offsetPivoteACentro;
+                        if (esObjetoDeEstante || sobreSuperficieElevada)
+                            transform.RotateAround(centroEnSuelo, Vector3.up, 32f);
+                        return;
+                    }
+                }
+            }
+
+            // Fallback seguro: rotación visible en su propio sitio sin penetrar geometría vecina
+            transform.RotateAround(centroVisual, Vector3.up, 42f);
+        }
+    }
+
+    private void PosicionarClonMimicSinClipping(GameObject clon)
+    {
+        if (clon == null || miRenderer == null) return;
+        MeshRenderer mrClon = clon.GetComponent<MeshRenderer>();
+        if (mrClon == null) return;
+
+        Bounds bOrig = miRenderer.bounds;
+        float pisoBase = ObtenerAlturaPisoSegura(bOrig.center, nombreCuarto);
+        bool sobreMueble = (bOrig.min.y - pisoBase) > 0.24f;
+
+        // Alinear temporalmente con el original para medir el desfase exacto entre transform.position y bounds.center del clon
+        clon.transform.position = transform.position;
+        clon.transform.rotation = transform.rotation * Quaternion.Euler(0f, 28f, 0f);
+        Bounds bClonBase = mrClon.bounds;
+        Vector3 offsetPivoteClon = bClonBase.center - clon.transform.position;
+        Vector3 halfExt = Vector3.Max(bOrig.extents * 0.84f, new Vector3(0.05f, 0.035f, 0.05f));
+
+        Vector3 centroCuarto = ObtenerCentroDeHabitacion(nombreCuarto);
+        Vector3 haciaCentro = new Vector3(centroCuarto.x - bOrig.center.x, 0f, centroCuarto.z - bOrig.center.z);
+        if (haciaCentro.sqrMagnitude < 0.01f) haciaCentro = Vector3.forward;
+        haciaCentro.Normalize();
+        Vector3 lat = Vector3.Cross(Vector3.up, haciaCentro).normalized;
+
+        Vector3[] dirs = new Vector3[]
+        {
+            lat,
+            -lat,
+            (lat + haciaCentro * 0.45f).normalized,
+            (-lat + haciaCentro * 0.45f).normalized,
+            haciaCentro,
+            (lat - haciaCentro * 0.45f).normalized,
+            (-lat - haciaCentro * 0.45f).normalized,
+            -haciaCentro
+        };
+
+        float anchoMax = Mathf.Max(bOrig.size.x, bOrig.size.z);
+        float sep1 = Mathf.Clamp(anchoMax + 0.09f, 0.18f, 0.36f);
+        float sep2 = Mathf.Clamp(anchoMax + 0.20f, 0.28f, 0.52f);
+        float[] seps = { sep1, sep2 };
+
+        // 1. Si el objeto original está sobre una mesa/lavabo/encimera, colocar el clon sobre la MISMA superficie sin salirse al aire ni chocar
+        if (sobreMueble)
+        {
+            for (int s = 0; s < seps.Length; s++)
+            {
+                for (int d = 0; d < dirs.Length; d++)
+                {
+                    Vector3 cand = bOrig.center + dirs[d] * seps[s];
+                    if (Physics.Raycast(new Vector3(cand.x, bOrig.max.y + 0.10f, cand.z), Vector3.down, out RaycastHit hitSup, 0.55f, ~0, QueryTriggerInteraction.Ignore))
+                    {
+                        if (hitSup.collider != null &&
+                            !hitSup.collider.transform.IsChildOf(transform) &&
+                            !hitSup.collider.transform.IsChildOf(clon.transform) &&
+                            Mathf.Abs(hitSup.point.y - bOrig.min.y) <= 0.065f)
+                        {
+                            Vector3 centroFinal = new Vector3(cand.x, hitSup.point.y + bOrig.extents.y + 0.003f, cand.z);
+                            if (EsEspacioLibreDeObstaculos(centroFinal, halfExt, clon.transform, hitSup.collider.transform, hitSup.point.y))
+                            {
+                                clon.transform.position = centroFinal - offsetPivoteClon;
+                                return;
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        // 2. Si está en el suelo (o la superficie superior era muy estrecha), apoyarlo limpiamente sobre el piso despejado al lado sin flotar
+        float[] sepsPiso = { sep2, sep2 + 0.16f, sep1 };
+        for (int s = 0; s < sepsPiso.Length; s++)
+        {
+            for (int d = 0; d < dirs.Length; d++)
+            {
+                Vector3 cand = bOrig.center + dirs[d] * sepsPiso[s];
+                float ySuelo = ObtenerAlturaPisoSegura(new Vector3(cand.x, pisoBase + 0.2f, cand.z), nombreCuarto);
+                Vector3 centroEnSuelo = new Vector3(cand.x, ySuelo + bOrig.extents.y + 0.004f, cand.z);
+                if (EsEspacioLibreDeObstaculos(centroEnSuelo, halfExt, clon.transform, null, ySuelo))
+                {
+                    clon.transform.position = centroEnSuelo - offsetPivoteClon;
+                    return;
+                }
+            }
+        }
+    }
+
+    private static bool EsEspacioLibreDeObstaculos(Vector3 centroCaja, Vector3 halfExtents, Transform ignorarA, Transform ignorarSoporte, float alturaSuperficieApoyo)
+    {
+        Collider[] cols = Physics.OverlapBox(centroCaja, halfExtents, Quaternion.identity, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < cols.Length; i++)
+        {
+            Collider c = cols[i];
+            if (c == null || !c.enabled || c.isTrigger) continue;
+            Transform ct = c.transform;
+            if (ignorarA != null && (ct == ignorarA || ct.IsChildOf(ignorarA))) continue;
+            if (ignorarSoporte != null && (ct == ignorarSoporte || ct.IsChildOf(ignorarSoporte))) continue;
+
+            // Ignorar únicamente la losa del suelo o la superficie plana exacta debajo del objeto
+            string cn = ct.name.ToLowerInvariant();
+            if (cn.Contains("floor") && c.bounds.max.y <= alturaSuperficieApoyo + 0.05f) continue;
+            if (alturaSuperficieApoyo > -100f && c.bounds.max.y <= alturaSuperficieApoyo + 0.035f) continue;
+
+            return false;
+        }
+        return true;
     }
 
     void Update()
@@ -2479,10 +2792,11 @@ public class ObjetoAnomalia : MonoBehaviour
     private void CrearOMostrarRastroDisplacement()
     {
         Vector3 centroVisual = miRenderer != null ? miRenderer.bounds.center : transform.position;
-        float pisoY = centroVisual.y > 3.15f ? 3.74f : (nombreCuarto == "Garage" ? 0.16f : 0.41f);
+        float pisoY = ObtenerAlturaPisoSegura(centroVisual, nombreCuarto);
         if (Physics.Raycast(centroVisual + Vector3.up * 0.15f, Vector3.down, out RaycastHit hitPiso, 2.2f, ~0, QueryTriggerInteraction.Ignore))
         {
-            pisoY = hitPiso.point.y;
+            if (hitPiso.point.y >= pisoY - 0.03f)
+                pisoY = hitPiso.point.y;
         }
 
         if (rastroDisplacementActual == null)
@@ -2648,8 +2962,23 @@ public class ObjetoAnomalia : MonoBehaviour
         VarianteAnomalia v = varianteActual;
         estaActiva = false;
         flawedSentadoActivoActual = false;
+        flawedVentanaActivoActual = false;
+        EnReaccionReportePreEliminacion = false;
         varianteActual = null;
         enLevitacionDisplacement = false;
+
+        if (luzContraluzVentanaFlawed != null)
+            luzContraluzVentanaFlawed.enabled = false;
+
+        if (v.tipo == TipoAnomalia.Tulpa)
+        {
+            EspejoTulpaVR[] espejos = FindObjectsByType<EspejoTulpaVR>(FindObjectsInactive.Include);
+            for (int i = 0; i < espejos.Length; i++)
+            {
+                if (espejos[i] != null)
+                    espejos[i].RestaurarEstadoNormalEspejo();
+            }
+        }
 
         if (rastroDisplacementActual != null)
             rastroDisplacementActual.SetActive(false);
@@ -2795,6 +3124,12 @@ public class ObjetoAnomalia : MonoBehaviour
         if (clipZumbidoElectrico == null)
             clipZumbidoElectrico = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/yourugor-tv-static-noise-291374.mp3");
 #endif
+        if (clipZumbidoElectrico == null)
+        {
+            Bloque1AnomaliasInteractivasVR b1 = FindAnyObjectByType<Bloque1AnomaliasInteractivasVR>(FindObjectsInactive.Include);
+            if (b1 != null && b1.clipEstaticaTV != null)
+                clipZumbidoElectrico = b1.clipEstaticaTV;
+        }
         if (clipZumbidoElectrico == null)
         {
             int sampleRate = 22050;

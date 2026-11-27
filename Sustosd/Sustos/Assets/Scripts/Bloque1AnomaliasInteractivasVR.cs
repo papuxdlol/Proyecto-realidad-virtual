@@ -225,20 +225,62 @@ public class Bloque1AnomaliasInteractivasVR : MonoBehaviour
             GameObject objCuadro = existente != null ? existente.gameObject : new GameObject(info.nombre);
             objCuadro.transform.SetParent(house.transform, true);
 
-            // Buscar el muro real mediante Raycast para que quede 100% pegado a la pared
+            // Buscar el muro arquitectónico despejado mediante Raycast (sin ventanas, puertas, switches ni muebles altos)
             Vector3 posFinal = info.centroBusqueda + info.dirHaciaPared * 1.6f;
             Quaternion rotFinal = Quaternion.LookRotation(-info.dirHaciaPared, Vector3.up);
+            Vector3 perp = Vector3.Cross(Vector3.up, info.dirHaciaPared).normalized;
+            Vector3[] dirsCandidatas = { info.dirHaciaPared, perp, -perp, -info.dirHaciaPared };
+            bool halladoLimpio = false;
 
-            RaycastHit[] hits = Physics.RaycastAll(info.centroBusqueda, info.dirHaciaPared, 5.0f, ~0, QueryTriggerInteraction.Ignore);
-            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
-            for (int h = 0; h < hits.Length; h++)
+            for (int dIdx = 0; dIdx < dirsCandidatas.Length && !halladoLimpio; dIdx++)
             {
-                if (hits[h].collider == null || hits[h].collider.isTrigger) continue;
-                string cn = hits[h].collider.transform.name.ToLowerInvariant();
-                if (cn.StartsWith("colliders") || (hits[h].collider.transform.parent != null && hits[h].collider.transform.parent.name == "House_Colliders"))
+                Vector3 dirP = dirsCandidatas[dIdx];
+                RaycastHit[] hits = Physics.RaycastAll(info.centroBusqueda, dirP, 5.2f, ~0, QueryTriggerInteraction.Ignore);
+                System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+                for (int h = 0; h < hits.Length; h++)
                 {
-                    posFinal = hits[h].point + hits[h].normal * 0.018f;
-                    rotFinal = Quaternion.LookRotation(-hits[h].normal, Vector3.up);
+                    if (hits[h].collider == null || hits[h].collider.isTrigger) continue;
+                    if (Mathf.Abs(hits[h].normal.y) > 0.2f) continue;
+
+                    Transform ct = hits[h].collider.transform;
+                    string cn = ct.name.ToLowerInvariant();
+                    bool esMuro = cn.StartsWith("colliders") || (ct.parent != null && ct.parent.name == "House_Colliders");
+                    if (!esMuro) continue;
+
+                    Vector3 candidatoPos = hits[h].point + hits[h].normal * 0.018f;
+                    Quaternion candidatoRot = Quaternion.LookRotation(-hits[h].normal, Vector3.up);
+
+                    // Verificar en una caja de 0.76m x 0.58m x 0.18m frente a la pared que no choque con ventanas, switches, puertas ni muebles
+                    Collider[] solapados = Physics.OverlapBox(
+                        hits[h].point + hits[h].normal * 0.11f,
+                        new Vector3(0.38f, 0.29f, 0.09f),
+                        candidatoRot,
+                        ~0,
+                        QueryTriggerInteraction.Ignore);
+
+                    bool obstruido = false;
+                    for (int s = 0; s < solapados.Length; s++)
+                    {
+                        if (solapados[s] == null) continue;
+                        Transform st = solapados[s].transform;
+                        if (st == objCuadro.transform || st.IsChildOf(objCuadro.transform)) continue;
+                        if (st == ct || (st.parent != null && st.parent.name == "House_Colliders")) continue;
+                        obstruido = true;
+                        break;
+                    }
+
+                    if (dIdx == 0 && !halladoLimpio)
+                    {
+                        posFinal = candidatoPos;
+                        rotFinal = candidatoRot;
+                    }
+                    if (!obstruido)
+                    {
+                        posFinal = candidatoPos;
+                        rotFinal = candidatoRot;
+                        halladoLimpio = true;
+                    }
                     break;
                 }
             }

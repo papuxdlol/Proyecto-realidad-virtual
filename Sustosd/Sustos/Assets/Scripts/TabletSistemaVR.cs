@@ -301,12 +301,142 @@ public class TabletSistemaVR : MonoBehaviour
             sonidoGlitch = CrearRuidoGlitchProcedural("TabletGlitch", 0.36f, 0.30f);
     }
 
+    private UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable grabTablet;
+    private Transform fundaTablet;
+    private float tiempoSueltaSinMano = 0f;
+    private bool botonInvocarTabletPrevio = false;
+    private bool tabletInvocadaConBoton = false;
+
     private void AjustarColliderTabletParaNoBloquearUI()
     {
         BoxCollider bc = GetComponent<BoxCollider>();
         if (bc != null)
         {
-            bc.center = new Vector3(bc.center.x, -0.0025f, bc.center.z);
+            // Colocar el collider ligeramente detrás del cristal UI con grosor cómodo (1.4 cm) para agarre fiable en Meta Quest 2 sin tapar el rayo derecho
+            bc.center = new Vector3(bc.center.x, -0.008f, bc.center.z);
+            bc.size = new Vector3(
+                Mathf.Max(bc.size.x, 0.18f),
+                Mathf.Max(bc.size.y, 0.014f),
+                Mathf.Max(bc.size.z, 0.24f));
+        }
+
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.useGravity = false;
+            rb.isKinematic = true;
+            rb.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+        }
+
+        grabTablet = GetComponent<UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable>();
+        if (grabTablet != null)
+        {
+            grabTablet.movementType = UnityEngine.XR.Interaction.Toolkit.Interactables.XRBaseInteractable.MovementType.Instantaneous;
+            grabTablet.throwOnDetach = false;
+            grabTablet.retainTransformParent = false;
+        }
+
+        GameObject objFunda = GameObject.Find("Funda de tablet");
+        if (objFunda != null)
+        {
+            fundaTablet = objFunda.transform;
+            SphereCollider sc = objFunda.GetComponent<SphereCollider>();
+            if (sc != null)
+            {
+                sc.isTrigger = true;
+                sc.radius = Mathf.Max(sc.radius, 0.22f);
+            }
+        }
+    }
+
+    private void ActualizarErgonomiaTabletQuest2()
+    {
+        Camera cam = Camera.main;
+        if (cam == null) return;
+
+        // 1. Mantener la funda de cintura izquierda orientada con el giro real del jugador en Quest 2 para encontrarla siempre al bajar la mano izquierda
+        if (fundaTablet != null)
+        {
+            Vector3 fwdPlano = new Vector3(cam.transform.forward.x, 0f, cam.transform.forward.z);
+            if (fwdPlano.sqrMagnitude < 0.001f) fwdPlano = Vector3.forward;
+            fwdPlano.Normalize();
+            Vector3 rightPlano = Vector3.Cross(Vector3.up, fwdPlano).normalized;
+
+            Vector3 posCaderaIzq = cam.transform.position
+                                   - Vector3.up * 0.50f
+                                   - rightPlano * 0.23f
+                                   + fwdPlano * 0.15f;
+            fundaTablet.position = Vector3.Lerp(fundaTablet.position, posCaderaIzq, 1f - Mathf.Exp(-14f * Time.deltaTime));
+            fundaTablet.rotation = Quaternion.Slerp(fundaTablet.rotation, Quaternion.LookRotation(fwdPlano, Vector3.up), 1f - Mathf.Exp(-14f * Time.deltaTime));
+        }
+
+        // 2. Atajo ergonómico en Meta Quest 2 (Botón Y / secundario del mando izquierdo, o tecla T en PC): invocar / guardar la Tablet frente a ti
+        bool botonPresionado = false;
+        if (!leftController.isValid)
+            leftController = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
+        if (leftController.isValid && leftController.TryGetFeatureValue(CommonUsages.secondaryButton, out bool yPressed) && yPressed)
+            botonPresionado = true;
+        if (UnityEngine.InputSystem.Keyboard.current != null && UnityEngine.InputSystem.Keyboard.current.tKey.isPressed)
+            botonPresionado = true;
+
+        if (botonPresionado && !botonInvocarTabletPrevio)
+        {
+            tabletInvocadaConBoton = !tabletInvocadaConBoton;
+            EnviarHapticAmbosMandos(0.22f, 0.05f);
+        }
+        botonInvocarTabletPrevio = botonPresionado;
+
+        bool agarradaPorMano = false;
+        if (grabTablet != null && grabTablet.isSelected)
+        {
+            var inter = grabTablet.firstInteractorSelecting;
+            agarradaPorMano = inter != null && !(inter is XRSocketInteractor);
+            if (agarradaPorMano)
+                tabletInvocadaConBoton = false;
+        }
+
+        if (agarradaPorMano)
+        {
+            tiempoSueltaSinMano = 0f;
+            return;
+        }
+
+        if (tabletInvocadaConBoton)
+        {
+            // Sostener cómodamente frente al costado izquierdo de la vista para pulsar con el rayo derecho
+            Vector3 posLectura = cam.transform.position
+                                 + cam.transform.forward * 0.44f
+                                 - cam.transform.right * 0.12f
+                                 - cam.transform.up * 0.11f;
+            Quaternion rotLectura = Quaternion.LookRotation(transform.position - cam.transform.position, cam.transform.up) * Quaternion.Euler(-90f, 0f, 0f);
+            if (tabletCanvas != null)
+            {
+                // Orientar la cara del Canvas directamente hacia los ojos del jugador
+                Vector3 haciaOjos = (cam.transform.position - posLectura).normalized;
+                rotLectura = Quaternion.LookRotation(haciaOjos, cam.transform.up) * Quaternion.Inverse(tabletCanvas.transform.localRotation);
+            }
+            transform.position = Vector3.Lerp(transform.position, posLectura, 1f - Mathf.Exp(-16f * Time.deltaTime));
+            transform.rotation = Quaternion.Slerp(transform.rotation, rotLectura, 1f - Mathf.Exp(-16f * Time.deltaTime));
+            return;
+        }
+
+        // 3. Si el jugador suelta la Tablet fuera de la funda en mitad de un cuarto, regresarla sola a la funda tras 0.45s para que JAMÁS se pierda
+        if (fundaTablet != null && (grabTablet == null || !grabTablet.isSelected))
+        {
+            float distAFunda = Vector3.Distance(transform.position, fundaTablet.position);
+            if (distAFunda > 0.16f)
+            {
+                tiempoSueltaSinMano += Time.deltaTime;
+                if (tiempoSueltaSinMano >= 0.45f)
+                {
+                    transform.position = Vector3.Lerp(transform.position, fundaTablet.position, 1f - Mathf.Exp(-12f * Time.deltaTime));
+                    transform.rotation = Quaternion.Slerp(transform.rotation, fundaTablet.rotation, 1f - Mathf.Exp(-12f * Time.deltaTime));
+                }
+            }
+            else
+            {
+                tiempoSueltaSinMano = 0f;
+            }
         }
     }
 
@@ -324,6 +454,8 @@ public class TabletSistemaVR : MonoBehaviour
     private void Update()
     {
         if (VRPauseMenu.IsMenuOpen || FinalTurnoVR.EstaEnSecuenciaFinal) return;
+
+        ActualizarErgonomiaTabletQuest2();
 
         // Fase 1: Inspección previa de la casa (11:55 PM -> 12:00 AM, cero anomalías)
         if (enFaseInspeccion)
@@ -799,9 +931,10 @@ public class TabletSistemaVR : MonoBehaviour
         procesandoReporte = true;
         ActualizarEstadoBotonPrincipal();
 
-        // Si el reporte coincide con el Flawed de traje sentado, disparar Sit To Stand para que se levante en los últimos momentos antes del corte!
+        // Si el reporte coincide con Flawed (sentado, de pie o en ventana), Forma Completa o Tulpa,
+        // disparar su reacción pre-eliminación (ej. levantarse de la silla, retorcerse, golpear el cristal o abalanzarse) antes del apagón!
         ObjetoAnomalia preMatch = BuscarAnomaliaReportada(cuartoCongelado, (TipoAnomalia)tipoCongelado);
-        bool disparoSitToStand = false;
+        bool disparoReaccionEntidad = false;
 
         Color colorProcesando = new Color(1f, 0.85f, 0.32f, 1f);
         string[] puntos = new string[] { ".", "..", "...", ".", "..", "..." };
@@ -821,10 +954,12 @@ public class TabletSistemaVR : MonoBehaviour
 
         for (int i = 0; i < puntos.Length; i++)
         {
-            if (!disparoSitToStand && i == 1 && preMatch != null && preMatch.EsFlawedSentadoActivo())
+            if (!disparoReaccionEntidad && i == 1 && preMatch != null && preMatch.TieneReaccionPreEliminacionPorReporte())
             {
-                disparoSitToStand = true;
-                preMatch.DispararSitToStandPorReporte();
+                disparoReaccionEntidad = true;
+                preMatch.DispararReaccionPreEliminacionPorReporte();
+                if (preMatch.tipoActivoActual == TipoAnomalia.PureForm)
+                    ActivarGlitchVisual(1.55f);
             }
 
             string textoAnimado = "Enviando" + puntos[i];
@@ -840,10 +975,10 @@ public class TabletSistemaVR : MonoBehaviour
             {
                 if (!clipSecuenciaCompleta && srcProc != null && sonidoProcesando != null)
                     srcProc.PlayOneShot(sonidoProcesando, 0.55f);
-                EnviarHapticPulso(0.12f, 0.05f);
+                EnviarHapticPulso(disparoReaccionEntidad ? 0.22f : 0.12f, 0.05f);
             }
 
-            yield return new WaitForSeconds(disparoSitToStand ? 0.34f : 0.29f);
+            yield return new WaitForSeconds(disparoReaccionEntidad ? 0.38f : 0.29f);
         }
 
         // Desvanecer suavemente el audio de procesando (0.16s) en vez de cortarlo en seco mientras entra el sonido de Acierto o Fallo

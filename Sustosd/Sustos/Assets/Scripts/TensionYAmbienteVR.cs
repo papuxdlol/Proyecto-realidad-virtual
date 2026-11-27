@@ -21,11 +21,13 @@ public class TensionYAmbienteVR : MonoBehaviour
     public AudioClip clipVientoVentana;
     public AudioClip clipCrujidoMadera;
     public AudioClip clipGolpeMadera;
+    public AudioClip clipGlitchPureForm;
 
     [Header("Parámetros de Tensión")]
     public float segundosMirandoParaReaccion = 4.0f;
     public float distanciaMaximaMirada = 4.8f;
     public float distanciaInterferenciaTablet = 3.1f;
+    public float distanciaGameOverEntidad = 1.36f;
     public int maxFalsosPositivosPorNoche = 2;
 
     private AudioSource fuenteLatido;
@@ -33,11 +35,27 @@ public class TensionYAmbienteVR : MonoBehaviour
     private AudioSource fuenteTicTac3AM;
     private AudioSource fuenteEvento3AM;
     private AudioSource fuenteParanoia3D;
+    private AudioSource fuenteGlitchVisor;
     private GameObject nodoAudioParanoia;
     private GameObject nodoAudioSusurros3D;
     private bool hayEntidadCercanaParaSusurros = false;
     private float proximoChequeoSusurro = -1f;
     private Coroutine rutinaSusurroAleatorio;
+
+    // Overlay de pantalla completa para interferencia VHS de Forma Completa (PureForm)
+    private Canvas canvasGlitchVisor;
+    private CanvasGroup grupoGlitchVisor;
+    private UnityEngine.UI.Image imgTinteGlitchVisor;
+    private UnityEngine.UI.Image imgBordeRojoIzq;
+    private UnityEngine.UI.Image imgBordeCianDer;
+    private readonly RectTransform[] barrasGlitchVisor = new RectTransform[6];
+    private readonly UnityEngine.UI.Image[] imgsBarrasGlitchVisor = new UnityEngine.UI.Image[6];
+    private float intensidadGlitchPureFormObjetivo = 0f;
+    private float intensidadGlitchPureFormActual = 0f;
+    private float tiempoFinPulsoGlitchForzado = -1f;
+    private float intensidadPulsoGlitchForzado = 0f;
+    private float proximoSaltoBarrasVisor = 0f;
+    private float proximoGlitchSyncTabletPureForm = 0f;
 
     private float temporizadorEscaneo = 0f;
     private float proximoLatido = 0f;
@@ -112,6 +130,12 @@ public class TensionYAmbienteVR : MonoBehaviour
         fuenteEvento3AM.loop = false;
         fuenteEvento3AM.volume = 0f;
 
+        fuenteGlitchVisor = gameObject.AddComponent<AudioSource>();
+        fuenteGlitchVisor.playOnAwake = false;
+        fuenteGlitchVisor.spatialBlend = 0f;
+        fuenteGlitchVisor.loop = true;
+        fuenteGlitchVisor.volume = 0f;
+
         nodoAudioParanoia = new GameObject("Emisor_Paranoia_Ambiental_VR");
         nodoAudioParanoia.transform.SetParent(transform, false);
         fuenteParanoia3D = nodoAudioParanoia.AddComponent<AudioSource>();
@@ -130,6 +154,8 @@ public class TensionYAmbienteVR : MonoBehaviour
             clipTicTacHoraMuerta = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/tic-tac-emilly.mp3");
         if (clipSonido3AM == null)
             clipSonido3AM = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/homarov-hell-sounds-12417.mp3");
+        if (clipGlitchPureForm == null)
+            clipGlitchPureForm = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/glitchstarting.mp3");
 #endif
         if (clipLatidoCorazon == null)
             clipLatidoCorazon = CrearLatidoProcedural();
@@ -141,12 +167,164 @@ public class TensionYAmbienteVR : MonoBehaviour
         cacheSwitches = FindObjectsByType<InterruptorLuz>(FindObjectsInactive.Include);
         proximoFalsoPositivo = Time.time + Random.Range(48f, 88f);
         proximoChequeoSusurro = Time.time + Random.Range(38f, 75f);
+        AsegurarOverlayGlitchVisor();
     }
 
     void OnDestroy()
     {
         if (Instancia == this)
             Instancia = null;
+        if (canvasGlitchVisor != null)
+            Destroy(canvasGlitchVisor.gameObject);
+    }
+
+    public void DispararPulsoGlitchPantallaCompleta(float duracion, float intensidad = 0.90f)
+    {
+        tiempoFinPulsoGlitchForzado = Mathf.Max(tiempoFinPulsoGlitchForzado, Time.time + duracion);
+        intensidadPulsoGlitchForzado = Mathf.Clamp01(intensidad);
+        AsegurarOverlayGlitchVisor();
+    }
+
+    private void AsegurarOverlayGlitchVisor()
+    {
+        if (canvasGlitchVisor != null) return;
+        Camera cam = Camera.main;
+        if (cam == null) return;
+
+        GameObject go = new GameObject("Visor_Glitch_PureForm_VR", typeof(RectTransform), typeof(Canvas), typeof(UnityEngine.UI.CanvasScaler), typeof(CanvasGroup));
+        go.layer = 5;
+        go.transform.SetParent(cam.transform, false);
+        // Plano óptico confortable para Meta Quest 2 (0.62 m evita fatiga de convergencia ocular y mareo)
+        go.transform.localPosition = new Vector3(0f, 0f, 0.62f);
+        go.transform.localRotation = Quaternion.identity;
+        go.transform.localScale = Vector3.one * 0.00185f;
+
+        RectTransform rt = (RectTransform)go.transform;
+        rt.sizeDelta = new Vector2(1100f, 820f);
+
+        canvasGlitchVisor = go.GetComponent<Canvas>();
+        canvasGlitchVisor.renderMode = RenderMode.WorldSpace;
+        canvasGlitchVisor.worldCamera = cam;
+        canvasGlitchVisor.sortingOrder = 940;
+
+        grupoGlitchVisor = go.GetComponent<CanvasGroup>();
+        grupoGlitchVisor.alpha = 0f;
+        grupoGlitchVisor.interactable = false;
+        grupoGlitchVisor.blocksRaycasts = false;
+
+        imgTinteGlitchVisor = CrearCapaGlitchVisor(rt, "Tinte_VHS", new Vector2(1100f, 820f), Vector2.zero, new Color(0.88f, 0.92f, 1.0f, 0.05f));
+        imgBordeRojoIzq = CrearCapaGlitchVisor(rt, "Aberracion_Roja_Izq", new Vector2(175f, 820f), new Vector2(-462f, 0f), new Color(0.95f, 0.12f, 0.18f, 0.20f));
+        imgBordeCianDer = CrearCapaGlitchVisor(rt, "Aberracion_Cian_Der", new Vector2(175f, 820f), new Vector2(462f, 0f), new Color(0.12f, 0.90f, 0.96f, 0.18f));
+
+        for (int i = 0; i < barrasGlitchVisor.Length; i++)
+        {
+            Color colBarra = (i % 3 == 0)
+                ? new Color(0.96f, 0.97f, 1.0f, 0.34f)
+                : ((i % 3 == 1) ? new Color(0.95f, 0.16f, 0.22f, 0.28f) : new Color(0.16f, 0.92f, 0.96f, 0.26f));
+            UnityEngine.UI.Image barra = CrearCapaGlitchVisor(rt, "Barra_Tear_VHS_" + i, new Vector2(1100f, 18f), new Vector2(0f, -280f + i * 110f), colBarra);
+            barrasGlitchVisor[i] = barra.rectTransform;
+            imgsBarrasGlitchVisor[i] = barra;
+        }
+
+        go.SetActive(false);
+    }
+
+    private static UnityEngine.UI.Image CrearCapaGlitchVisor(Transform parent, string nombre, Vector2 size, Vector2 pos, Color col)
+    {
+        GameObject obj = new GameObject(nombre, typeof(RectTransform), typeof(CanvasRenderer), typeof(UnityEngine.UI.Image));
+        obj.layer = 5;
+        obj.transform.SetParent(parent, false);
+        RectTransform r = (RectTransform)obj.transform;
+        r.anchorMin = new Vector2(0.5f, 0.5f);
+        r.anchorMax = new Vector2(0.5f, 0.5f);
+        r.sizeDelta = size;
+        r.anchoredPosition = pos;
+        UnityEngine.UI.Image img = obj.GetComponent<UnityEngine.UI.Image>();
+        img.color = col;
+        img.raycastTarget = false;
+        return img;
+    }
+
+    private void ActualizarEfectoGlitchVisorPureForm()
+    {
+        float meta = intensidadGlitchPureFormObjetivo;
+        if (Time.time < tiempoFinPulsoGlitchForzado)
+            meta = Mathf.Max(meta, intensidadPulsoGlitchForzado);
+
+        intensidadGlitchPureFormActual = Mathf.MoveTowards(
+            intensidadGlitchPureFormActual,
+            meta,
+            Time.deltaTime * (meta > intensidadGlitchPureFormActual ? 4.2f : 2.6f));
+
+        if (intensidadGlitchPureFormActual <= 0.01f)
+        {
+            if (canvasGlitchVisor != null && canvasGlitchVisor.gameObject.activeSelf)
+                canvasGlitchVisor.gameObject.SetActive(false);
+            if (fuenteGlitchVisor != null && fuenteGlitchVisor.isPlaying)
+            {
+                fuenteGlitchVisor.volume = 0f;
+                fuenteGlitchVisor.Stop();
+            }
+            return;
+        }
+
+        AsegurarOverlayGlitchVisor();
+        if (canvasGlitchVisor == null || grupoGlitchVisor == null) return;
+
+        if (!canvasGlitchVisor.gameObject.activeSelf)
+            canvasGlitchVisor.gameObject.SetActive(true);
+
+        float flicker = 0.72f + 0.28f * Mathf.Sin(Time.unscaledTime * 47f);
+        grupoGlitchVisor.alpha = Mathf.Clamp01(intensidadGlitchPureFormActual * flicker);
+
+        if (Time.unscaledTime >= proximoSaltoBarrasVisor)
+        {
+            proximoSaltoBarrasVisor = Time.unscaledTime + Random.Range(0.032f, 0.068f);
+            float k = intensidadGlitchPureFormActual;
+
+            if (imgTinteGlitchVisor != null)
+            {
+                bool picoBlanco = Random.value < (0.14f * k);
+                imgTinteGlitchVisor.color = picoBlanco
+                    ? new Color(0.95f, 0.96f, 1.0f, 0.16f * k)
+                    : new Color(0.08f, 0.03f, 0.05f, 0.10f * k);
+            }
+            if (imgBordeRojoIzq != null)
+                imgBordeRojoIzq.rectTransform.anchoredPosition = new Vector2(-455f + Random.Range(-18f, 22f) * k, 0f);
+            if (imgBordeCianDer != null)
+                imgBordeCianDer.rectTransform.anchoredPosition = new Vector2(455f + Random.Range(-22f, 18f) * k, 0f);
+
+            for (int i = 0; i < barrasGlitchVisor.Length; i++)
+            {
+                RectTransform br = barrasGlitchVisor[i];
+                if (br == null) continue;
+                bool visible = Random.value < (0.35f + 0.55f * k);
+                imgsBarrasGlitchVisor[i].enabled = visible;
+                if (visible)
+                {
+                    float alto = Random.Range(6f, 34f * k + 8f);
+                    float ancho = Random.Range(420f, 1120f);
+                    br.sizeDelta = new Vector2(ancho, alto);
+                    br.anchoredPosition = new Vector2(Random.Range(-160f, 160f), Random.Range(-360f, 360f));
+                }
+            }
+        }
+
+        AudioClip clipG = clipGlitchPureForm;
+        if (clipG == null && TabletSistemaVR.Instancia != null)
+            clipG = TabletSistemaVR.Instancia.sonidoGlitch;
+
+        if (fuenteGlitchVisor != null && clipG != null)
+        {
+            if (!fuenteGlitchVisor.isPlaying)
+            {
+                fuenteGlitchVisor.clip = clipG;
+                fuenteGlitchVisor.loop = true;
+                fuenteGlitchVisor.Play();
+            }
+            fuenteGlitchVisor.pitch = Mathf.Lerp(0.88f, 1.16f, intensidadGlitchPureFormActual);
+            fuenteGlitchVisor.volume = Mathf.Clamp(intensidadGlitchPureFormActual * 0.28f, 0f, 0.30f);
+        }
     }
 
     void Update()
@@ -155,12 +333,16 @@ public class TensionYAmbienteVR : MonoBehaviour
         {
             if (fuenteLatido != null && fuenteLatido.isPlaying) fuenteLatido.Pause();
             if (fuenteSusurros != null && fuenteSusurros.isPlaying) fuenteSusurros.Pause();
+            if (fuenteGlitchVisor != null && fuenteGlitchVisor.isPlaying) fuenteGlitchVisor.Stop();
+            if (canvasGlitchVisor != null && canvasGlitchVisor.gameObject.activeSelf) canvasGlitchVisor.gameObject.SetActive(false);
             return;
         }
 
         TabletSistemaVR tablet = TabletSistemaVR.Instancia;
         if (tablet == null || tablet.EstaEnInspeccion || tablet.HoraActual >= 6)
         {
+            intensidadGlitchPureFormObjetivo = 0f;
+            ActualizarEfectoGlitchVisorPureForm();
             if (fuenteLatido != null && fuenteLatido.isPlaying) fuenteLatido.Stop();
             if (fuenteSusurros != null && fuenteSusurros.isPlaying) fuenteSusurros.Stop();
             return;
@@ -174,14 +356,17 @@ public class TensionYAmbienteVR : MonoBehaviour
         // 1b. Susurros como evento aleatorio esporádico de baja probabilidad (no en bucle continuo)
         EvaluarEventoSusurrosAleatorios(activas);
 
-        // 2. Escaneo ligero cada 0.15 s (cero carga en Meta Quest 2) para Ideas 7b y 9
+        // 2. Escaneo ligero cada 0.12 s (cero carga en Meta Quest 2) para PureForm Glitch, Game Over por cercanía e Ideas 7b y 9
         temporizadorEscaneo += Time.deltaTime;
-        if (temporizadorEscaneo >= 0.15f)
+        if (temporizadorEscaneo >= 0.12f)
         {
             float dt = temporizadorEscaneo;
             temporizadorEscaneo = 0f;
             EvaluarCercaniaYMiradaAAnomalias(tablet, dt);
         }
+
+        // 2b. Animar interferencia de pantalla completa cuando PureForm está cerca o siendo reportada
+        ActualizarEfectoGlitchVisorPureForm();
 
         // 3. Idea 10: Paranoia ambiental (1-2 falsos positivos inofensivos por noche)
         ActualizarParanoiaAmbiental(activas);
@@ -292,11 +477,13 @@ public class TensionYAmbienteVR : MonoBehaviour
 
         Vector3 posCam = cam.transform.position;
         Vector3 dirCam = cam.transform.forward;
+        string cuartoJugador = ObjetoAnomalia.NormalizarCuartoPorPosicion(posCam, "LivingRoom");
 
         ObjetoAnomalia entidadVista = null;
         float mejorDistMirada = distanciaMaximaMirada;
         bool hayInterferenciaCercana = false;
         hayEntidadCercanaParaSusurros = false;
+        float maxGlitchPureForm = 0f;
 
         List<ObjetoAnomalia> lista = tablet.todasLasAnomalias;
         for (int i = 0; i < lista.Count; i++)
@@ -309,6 +496,49 @@ public class TensionYAmbienteVR : MonoBehaviour
             if (Mathf.Abs(posCam.y - posAnom.y) > 2.3f) continue;
 
             float dist = Vector3.Distance(posCam, posAnom);
+            float distXZ = Vector2.Distance(new Vector2(posCam.x, posCam.z), new Vector2(posAnom.x, posAnom.z));
+
+            // 1. Game Over inmediato por acercarse demasiado a Preacher, Flawed (interior) o PureForm (sin atravesar muros)
+            bool esEntidadLetalCercana =
+                a.tipoActivoActual == TipoAnomalia.Preacher ||
+                a.tipoActivoActual == TipoAnomalia.PureForm ||
+                (a.tipoActivoActual == TipoAnomalia.Flawed && !a.EsFlawedVentanaActivo());
+
+            if (esEntidadLetalCercana &&
+                !a.EnReaccionReportePreEliminacion &&
+                Mathf.Abs(posCam.y - posAnom.y) <= 1.85f &&
+                distXZ <= distanciaGameOverEntidad)
+            {
+                Vector3 puntoPechoEntidad = new Vector3(posAnom.x, Mathf.Lerp(posAnom.y, posCam.y, 0.55f), posAnom.z);
+                bool lineaDirecta = InteractorUniversalVR.TieneLineaDeVisionDirecta(posCam, puntoPechoEntidad, a.transform);
+                bool mismoCuartoMuyCerca = distXZ <= 1.15f && string.Equals(a.nombreCuarto, cuartoJugador, System.StringComparison.OrdinalIgnoreCase);
+
+                if (lineaDirecta || (a.tipoActivoActual == TipoAnomalia.Preacher && mismoCuartoMuyCerca))
+                {
+                    string nombreEntidad = a.tipoActivoActual == TipoAnomalia.Preacher
+                        ? "THE PREACHER"
+                        : (a.tipoActivoActual == TipoAnomalia.PureForm ? "FORMA COMPLETA" : "FLAWED");
+                    FinalTurnoVR.DispararDerrotaGlobal(a.tipoActivoActual, $"TE ACERCASTE DEMASIADO A {nombreEntidad}");
+                    return;
+                }
+            }
+
+            // 2. Glitch progresivo de pantalla completa + Tablet sincronizada ante Forma Completa (PureForm)
+            if (a.tipoActivoActual == TipoAnomalia.PureForm && dist <= 7.0f)
+            {
+                Vector3 puntoCabezaPure = new Vector3(posAnom.x, posCam.y, posAnom.z);
+                bool loVe = InteractorUniversalVR.TieneLineaDeVisionDirecta(posCam, puntoCabezaPure, a.transform);
+                bool mismoCuarto = string.Equals(a.nombreCuarto, cuartoJugador, System.StringComparison.OrdinalIgnoreCase);
+                if (loVe || mismoCuarto || dist <= 3.8f)
+                {
+                    float baseProx = Mathf.Clamp01(1f - ((dist - 1.6f) / 5.4f));
+                    Vector3 haciaPure = (puntoCabezaPure - posCam).normalized;
+                    float factorMirada = loVe ? Mathf.Clamp01(Vector3.Dot(dirCam, haciaPure)) : 0f;
+                    float nivelGlitch = Mathf.Clamp01(baseProx * (loVe ? 0.68f : 0.34f) + factorMirada * 0.42f);
+                    if (nivelGlitch > maxGlitchPureForm)
+                        maxGlitchPureForm = nivelGlitch;
+                }
+            }
 
             // Interferencia (glitchstarting) en la Tablet específicamente al acercarse a una anomalía HUMANOIDE
             bool esHumanoide = TabletSistemaVR.EsEntidadHumanoide(a.tipoActivoActual);
@@ -319,7 +549,7 @@ public class TensionYAmbienteVR : MonoBehaviour
                 hayInterferenciaCercana = true;
 
             // Idea 7b: Mirar fijamente a una entidad humanoide de cerca
-            if (TabletSistemaVR.EsEntidadHumanoide(a.tipoActivoActual) && dist <= mejorDistMirada)
+            if (esHumanoide && dist <= mejorDistMirada)
             {
                 Vector3 haciaEntidad = (posAnom - posCam).normalized;
                 float angulo = Vector3.Angle(dirCam, haciaEntidad);
@@ -331,9 +561,19 @@ public class TensionYAmbienteVR : MonoBehaviour
             }
         }
 
-        // Disparar glitch breve en Tablet (con cooldown para no molestar ni bloquear botones)
-        if (hayInterferenciaCercana && Time.time >= proximoGlitchPermitido)
+        intensidadGlitchPureFormObjetivo = maxGlitchPureForm;
+
+        // Sincronizar también el glitch de la Tablet continuamente cuando PureForm distorsiona la visión
+        if (maxGlitchPureForm >= 0.22f && Time.time >= proximoGlitchSyncTabletPureForm)
         {
+            proximoGlitchSyncTabletPureForm = Time.time + Mathf.Lerp(1.6f, 0.55f, maxGlitchPureForm);
+            tablet.ActivarGlitchVisual(0.38f);
+            if (maxGlitchPureForm >= 0.55f)
+                tablet.EnviarHapticAmbosMandos(0.16f * maxGlitchPureForm, 0.06f);
+        }
+        else if (hayInterferenciaCercana && Time.time >= proximoGlitchPermitido)
+        {
+            // Disparar glitch breve en Tablet (con cooldown para otras entidades humanoides)
             proximoGlitchPermitido = Time.time + Random.Range(7.5f, 11.5f);
             tablet.ActivarGlitchVisual(0.45f);
         }

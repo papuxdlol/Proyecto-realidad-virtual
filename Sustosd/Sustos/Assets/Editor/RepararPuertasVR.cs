@@ -14,7 +14,7 @@ using TMPro;
 [InitializeOnLoad]
 public class RepararPuertasVR : EditorWindow
 {
-    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v28.flag";
+    private const string AutoFixFlagPath = "Temp/AutoFixSustosVR_v30.flag";
 
     static RepararPuertasVR()
     {
@@ -476,15 +476,84 @@ public class RepararPuertasVR : EditorWindow
             AudioClip clipHell3AM = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/homarov-hell-sounds-12417.mp3");
             AudioClip clipViento = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/freesound_community-wind-ambience-14720.mp3");
             AudioClip clipGolpe = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/soumages-walking-on-wood-363349.mp3");
+            AudioClip clipGlitchPF = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Model/sonido/23newsound/glitchstarting.mp3");
             if (clipLatido != null) tension.clipLatidoCorazon = clipLatido;
             if (clipSusurros != null) tension.clipVocesSusurros = clipSusurros;
             if (clipTicTac != null) tension.clipTicTacHoraMuerta = clipTicTac;
             if (clipHell3AM != null) tension.clipSonido3AM = clipHell3AM;
             if (clipViento != null) tension.clipVientoVentana = clipViento;
+            if (clipGlitchPF != null) tension.clipGlitchPureForm = clipGlitchPF;
             // NUNCA asignar audio de abrir puerta a paranoia ambiental para evitar falsas alarmas de puerta
             tension.clipCrujidoMadera = null;
             if (clipGolpe != null) tension.clipGolpeMadera = clipGolpe;
             EditorUtility.SetDirty(tension);
+        }
+
+        // 9b. Adaptación física Meta Quest 2: CharacterController (escaleras 52.4°), Tablet XRGrabInteractable y Shaders APK Android
+        foreach (CharacterController cc in Object.FindObjectsByType<CharacterController>(FindObjectsInactive.Include))
+        {
+            if (cc == null) continue;
+            Undo.RecordObject(cc, "Ajustar CharacterController Escaleras Quest 2");
+            cc.slopeLimit = 62f;
+            cc.stepOffset = Mathf.Max(cc.stepOffset, 0.42f);
+            cc.skinWidth = 0.03f;
+            cc.minMoveDistance = 0.0005f;
+            EditorUtility.SetDirty(cc);
+        }
+
+        if (tablet != null)
+        {
+            XRGrabInteractable grabTab = tablet.GetComponent<XRGrabInteractable>();
+            if (grabTab != null)
+            {
+                Undo.RecordObject(grabTab, "Optimizar XRGrabInteractable Tablet Quest 2");
+                grabTab.movementType = XRBaseInteractable.MovementType.Instantaneous;
+                grabTab.throwOnDetach = false;
+                grabTab.retainTransformParent = false;
+                EditorUtility.SetDirty(grabTab);
+            }
+        }
+
+        Object graphicsAsset = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset")[0];
+        if (graphicsAsset != null)
+        {
+            SerializedObject soGfx = new SerializedObject(graphicsAsset);
+            SerializedProperty propShaders = soGfx.FindProperty("m_AlwaysIncludedShaders");
+            if (propShaders != null)
+            {
+                string[] shadersRequeridosAPK = {
+                    "Universal Render Pipeline/Lit",
+                    "Universal Render Pipeline/Unlit",
+                    "Sprites/Default"
+                };
+                bool cambioShader = false;
+                foreach (string sName in shadersRequeridosAPK)
+                {
+                    Shader sh = Shader.Find(sName);
+                    if (sh == null) continue;
+                    bool existe = false;
+                    for (int idx = 0; idx < propShaders.arraySize; idx++)
+                    {
+                        if (propShaders.GetArrayElementAtIndex(idx).objectReferenceValue == sh)
+                        {
+                            existe = true;
+                            break;
+                        }
+                    }
+                    if (!existe)
+                    {
+                        int nuevoIdx = propShaders.arraySize;
+                        propShaders.InsertArrayElementAtIndex(nuevoIdx);
+                        propShaders.GetArrayElementAtIndex(nuevoIdx).objectReferenceValue = sh;
+                        cambioShader = true;
+                    }
+                }
+                if (cambioShader)
+                {
+                    soGfx.ApplyModifiedProperties();
+                    AssetDatabase.SaveAssets();
+                }
+            }
         }
 
         // 10. Asegurar y conectar audios de Fase 3 (Screamer + Death Screen VHS + Victoria 6:00 AM)
@@ -1203,12 +1272,14 @@ public class RepararPuertasVR : EditorWindow
             "Assets/Model/Props/Generados/Flawed_02_CuelloRoto.fbx",
             "Assets/Model/Props/Generados/Flawed_03_MandibulaEstirada.fbx",
             "Assets/Model/Props/Generados/Flawed_04_HombreTraje.fbx",
-            "Assets/Model/Props/Generados/Flawed_05_CabezaGirada.fbx"
+            "Assets/Model/Props/Generados/Flawed_05_CabezaGirada.fbx",
+            "Assets/Model/Props/Generados/Flawed_06_Ventana.fbx"
         };
-        float[] alturasVariantes = { 1.72f, 1.86f, 1.83f, 1.83f, 1.73f };
+        float[] alturasVariantes = { 1.72f, 1.86f, 1.83f, 1.83f, 1.73f, 1.84f };
 
         RuntimeAnimatorController ctrlPie = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>("Assets/Animations/Controllers/AC_Flawed_Pie.controller");
         RuntimeAnimatorController ctrlSentado = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>("Assets/Animations/Controllers/AC_Flawed_Sentado.controller");
+        RuntimeAnimatorController ctrlVentana = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>("Assets/Animations/Controllers/AC_Flawed_Ventana.controller");
 
         int creadas = 0;
         for (int i = 0; i < rutasVariantes.Length; i++)
@@ -1221,9 +1292,12 @@ public class RepararPuertasVR : EditorWindow
                 inst = Object.Instantiate(pf, visual);
 
             bool esTrajeSentado = rutasVariantes[i].Contains("HombreTraje");
+            bool esVentana = rutasVariantes[i].Contains("Ventana");
             inst.name = esTrajeSentado
                 ? "Flawed_Variante_3_TrajeSentado"
-                : (rutasVariantes[i].Contains("CabezaGirada") ? "Flawed_Variante_4_CabezaGirada" : "Flawed_Variante_" + creadas);
+                : (rutasVariantes[i].Contains("CabezaGirada")
+                    ? "Flawed_Variante_4_CabezaGirada"
+                    : (esVentana ? "Flawed_Variante_5_Ventana" : "Flawed_Variante_" + creadas));
             inst.transform.localPosition = Vector3.zero;
             inst.transform.localRotation = Quaternion.identity;
             inst.transform.localScale = Vector3.one;
@@ -1233,7 +1307,7 @@ public class RepararPuertasVR : EditorWindow
             Animator animComp = inst.GetComponentInChildren<Animator>(true);
             if (animComp == null)
                 animComp = inst.AddComponent<Animator>();
-            animComp.runtimeAnimatorController = esTrajeSentado ? ctrlSentado : ctrlPie;
+            animComp.runtimeAnimatorController = esTrajeSentado ? ctrlSentado : (esVentana && ctrlVentana != null ? ctrlVentana : ctrlPie);
             animComp.applyRootMotion = false;
             animComp.cullingMode = AnimatorCullingMode.AlwaysAnimate;
 

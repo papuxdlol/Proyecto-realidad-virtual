@@ -145,9 +145,15 @@ public sealed class VRPauseMenu : MonoBehaviour
             typeof(TrackedDeviceGraphicRaycaster));
         canvasObject.layer = 5;
         canvasObject.transform.SetParent(xrCamera.transform, false);
-        canvasObject.transform.localPosition = new Vector3(0f, 0f, 1.6f);
+        canvasObject.transform.localPosition = new Vector3(0f, 0f, 1.55f);
         canvasObject.transform.localRotation = Quaternion.identity;
-        canvasObject.transform.localScale = Vector3.one * 0.0015f;
+        float escalaBase = 0.00145f;
+        if (xrCamera.fieldOfView > 10f && xrCamera.fieldOfView < 80f)
+        {
+            float factorFov = Mathf.Tan(xrCamera.fieldOfView * 0.5f * Mathf.Deg2Rad) / Mathf.Tan(45f * Mathf.Deg2Rad);
+            escalaBase *= Mathf.Clamp(factorFov, 0.62f, 1f);
+        }
+        canvasObject.transform.localScale = Vector3.one * escalaBase;
 
         RectTransform canvasRect = (RectTransform)canvasObject.transform;
         canvasRect.sizeDelta = new Vector2(1000f, 760f);
@@ -156,7 +162,10 @@ public sealed class VRPauseMenu : MonoBehaviour
         menuCanvas.renderMode = RenderMode.WorldSpace;
         menuCanvas.worldCamera = xrCamera;
         menuCanvas.sortingOrder = 200;
-        CreatePauseBlurVolume();
+        if (Application.platform != RuntimePlatform.Android)
+        {
+            CreatePauseBlurVolume();
+        }
 
         CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
         scaler.dynamicPixelsPerUnit = 10f;
@@ -164,7 +173,8 @@ public sealed class VRPauseMenu : MonoBehaviour
 
         pauseMenuRoot = CreateRectObject("Panel de pausa", canvasRect);
         pauseMenuRoot.GetComponent<RectTransform>().sizeDelta = canvasRect.sizeDelta;
-        CreateVrImage(pauseMenuRoot.transform, "Oscurecimiento", canvasRect.sizeDelta, Vector2.zero, new Color(0f, 0f, 0f, 0.62f)).raycastTarget = false;
+        float alphaOscurecimiento = Application.platform == RuntimePlatform.Android ? 0.78f : 0.62f;
+        CreateVrImage(pauseMenuRoot.transform, "Oscurecimiento", canvasRect.sizeDelta, Vector2.zero, new Color(0f, 0f, 0f, alphaOscurecimiento)).raycastTarget = false;
 
         mainMenuPanel = CreatePanel(pauseMenuRoot.transform, "Opciones principales", "PAUSA");
         CreateVrButton(mainMenuPanel.transform, "Continuar", "CONTINUAR", new Vector2(0f, 122f), new Vector2(580f, 76f), ResumeGame, true);
@@ -172,11 +182,39 @@ public sealed class VRPauseMenu : MonoBehaviour
         CreateVrButton(mainMenuPanel.transform, "Abrir opciones", "OPCIONES", new Vector2(0f, -66f), new Vector2(580f, 76f), ShowOptions);
         CreateVrButton(mainMenuPanel.transform, "Salir", "SALIR DEL JUEGO", new Vector2(0f, -160f), new Vector2(580f, 76f), QuitGame);
         optionsPanel = CreatePanel(pauseMenuRoot.transform, "Panel de opciones", "OPCIONES");
-        CreateVrText(optionsPanel.transform, "Etiqueta de volumen", "VOLUMEN", new Vector2(0f, 74f), new Vector2(500f, 44f), 24, TextAnchor.MiddleCenter);
+        CreateVrText(optionsPanel.transform, "Etiqueta de volumen", "VOLUMEN", new Vector2(0f, 118f), new Vector2(500f, 40f), 24, TextAnchor.MiddleCenter);
         CreateVolumeSlider(optionsPanel.transform);
-        CreateVrButton(optionsPanel.transform, "Volver", "VOLVER", new Vector2(0f, -150f), new Vector2(420f, 76f), ShowMainMenu);
+        CreateComfortTurnButton(optionsPanel.transform);
+        CreateVrButton(optionsPanel.transform, "Volver", "VOLVER", new Vector2(0f, -168f), new Vector2(420f, 74f), ShowMainMenu);
         optionsPanel.SetActive(false);
         pauseMenuRoot.SetActive(false);
+    }
+
+    private Text txtBotonGiroConfort;
+
+    private void CreateComfortTurnButton(Transform parent)
+    {
+        CreateVrText(parent, "Etiqueta confort VR", "CONFORT VR (ANTI-NÁUSEA)", new Vector2(0f, -12f), new Vector2(560f, 36f), 21, TextAnchor.MiddleCenter);
+        Image img = CreateVrImage(parent, "Boton giro confort", new Vector2(560f, 66f), new Vector2(0f, -66f), new Color(0.14f, 0.24f, 0.18f, 1f));
+        Button btn = img.gameObject.AddComponent<Button>();
+        btn.targetGraphic = img;
+        btn.navigation = new Navigation { mode = Navigation.Mode.None };
+        btn.onClick.AddListener(ToggleComfortTurnMode);
+        txtBotonGiroConfort = CreateVrText(img.transform, "Label", ObtenerTextoModoGiro(), Vector2.zero, new Vector2(540f, 66f), 21, TextAnchor.MiddleCenter, FontStyle.Bold);
+    }
+
+    private static string ObtenerTextoModoGiro()
+    {
+        return CiudadCameraLook.GiroSnapAntiNauseaActivo
+            ? "GIRO: POR GRADOS 45° (SIN NÁUSEA)"
+            : "GIRO: CONTINUO SUAVE (65°/S)";
+    }
+
+    private void ToggleComfortTurnMode()
+    {
+        CiudadCameraLook.AlternarModoGiroConfortVR();
+        if (txtBotonGiroConfort != null)
+            txtBotonGiroConfort.text = ObtenerTextoModoGiro();
     }
 
     private GameObject CreatePanel(Transform parent, string objectName, string title)
@@ -191,7 +229,7 @@ public sealed class VRPauseMenu : MonoBehaviour
 
     private void CreateVolumeSlider(Transform parent)
     {
-        Image track = CreateVrImage(parent, "Barra de volumen", new Vector2(480f, 28f), new Vector2(0f, 20f), new Color(0.18f, 0.19f, 0.21f, 1f));
+        Image track = CreateVrImage(parent, "Barra de volumen", new Vector2(480f, 28f), new Vector2(0f, 68f), new Color(0.18f, 0.19f, 0.21f, 1f));
         RectTransform fillRect = CreateRectObject("Relleno de volumen", track.transform).GetComponent<RectTransform>();
         fillRect.anchorMin = Vector2.zero;
         fillRect.anchorMax = new Vector2(0f, 1f);

@@ -20,6 +20,71 @@ public sealed class CiudadCameraLook : MonoBehaviour
     private Vector2 smoothedStick;
     private float pitch;
     private bool visorVRRealConectado;
+    private bool characterControllerAjustado;
+    private bool xriTurnProviderDetectado;
+    private float proximoChequeoRig = 0f;
+
+    // Por defecto en Meta Quest 2 usamos Giro por Grados (Snap Turn 45°) y velocidad de caminata interior suave (1.85 m/s) para CERO náusea
+    public static bool GiroSnapAntiNauseaActivo { get; private set; } = true;
+
+    public static void AlternarModoGiroConfortVR()
+    {
+        GiroSnapAntiNauseaActivo = !GiroSnapAntiNauseaActivo;
+        AplicarConfiguracionConfortLocomocion(GiroSnapAntiNauseaActivo);
+    }
+
+    public static void AplicarConfiguracionConfortLocomocion(bool usarSnapTurnSinNausea)
+    {
+        GiroSnapAntiNauseaActivo = usarSnapTurnSinNausea;
+        MonoBehaviour[] mbs = FindObjectsByType<MonoBehaviour>(FindObjectsInactive.Include);
+        for (int i = 0; i < mbs.Length; i++)
+        {
+            MonoBehaviour mb = mbs[i];
+            if (mb == null) continue;
+            System.Type tipo = mb.GetType();
+            string tn = tipo.Name;
+
+            // 1. Limitar velocidad de caminata continua a ritmo humano interior (1.85 m/s) para evitar mareo vestibular
+            if (tn.Contains("MoveProvider"))
+            {
+                var propSpeed = tipo.GetProperty("moveSpeed", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (propSpeed != null && propSpeed.CanRead && propSpeed.CanWrite && propSpeed.PropertyType == typeof(float))
+                {
+                    float actual = (float)propSpeed.GetValue(mb, null);
+                    if (actual > 1.90f || actual < 0.8f)
+                        propSpeed.SetValue(mb, 1.85f, null);
+                }
+            }
+
+            // 2. Activar Snap Turn (45° instantáneo = cero mareo) o Giro Suave moderado (65°/s) según preferencia en Opciones
+            var propSmoothTurn = tipo.GetProperty("smoothTurnEnabled", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (propSmoothTurn != null && propSmoothTurn.CanWrite && propSmoothTurn.PropertyType == typeof(bool))
+            {
+                propSmoothTurn.SetValue(mb, !usarSnapTurnSinNausea, null);
+            }
+
+            if (tn.Contains("ContinuousTurnProvider"))
+            {
+                var propTurnSpeed = tipo.GetProperty("turnSpeed", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (propTurnSpeed != null && propTurnSpeed.CanWrite && propTurnSpeed.PropertyType == typeof(float))
+                    propTurnSpeed.SetValue(mb, 65f, null);
+            }
+            else if (tn.Contains("SnapTurnProvider"))
+            {
+                var propTurnAmount = tipo.GetProperty("turnAmount", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (propTurnAmount != null && propTurnAmount.CanWrite && propTurnAmount.PropertyType == typeof(float))
+                    propTurnAmount.SetValue(mb, 45f, null);
+            }
+
+            // 3. Asegurar activa la viñeta de confort periférica (TunnelingVignette) si existe en el rig
+            if (tn.Contains("TunnelingVignette"))
+            {
+                mb.enabled = true;
+                if (!mb.gameObject.activeSelf)
+                    mb.gameObject.SetActive(true);
+            }
+        }
+    }
 
     public static bool EsVisorVRRealActivo()
     {
@@ -73,6 +138,44 @@ public sealed class CiudadCameraLook : MonoBehaviour
     private void Awake()
     {
         DesactivarSimuladorSiHayVisorReal();
+        AsegurarLocomocionEscalerasYTurnVR();
+    }
+
+    private void AsegurarLocomocionEscalerasYTurnVR()
+    {
+        // En House_Colliders.fbx la rampa de las escaleras tiene ~52.4° de pendiente;
+        // elevar slopeLimit a 62° y stepOffset a 0.42m garantiza subir/bajar sin atascos en Meta Quest 2.
+        CharacterController[] controllers = FindObjectsByType<CharacterController>(FindObjectsInactive.Include);
+        for (int i = 0; i < controllers.Length; i++)
+        {
+            CharacterController cc = controllers[i];
+            if (cc == null) continue;
+            if (cc.slopeLimit < 62f) cc.slopeLimit = 62f;
+            if (cc.stepOffset < 0.42f) cc.stepOffset = 0.42f;
+            cc.skinWidth = Mathf.Clamp(cc.skinWidth, 0.02f, 0.04f);
+            cc.minMoveDistance = 0.0005f;
+            characterControllerAjustado = true;
+        }
+
+        if (EsVisorVRRealActivo())
+        {
+            AplicarConfiguracionConfortLocomocion(GiroSnapAntiNauseaActivo);
+        }
+
+        // Detectar si el prefab de XR Origin ya tiene un TurnProvider activo de XRI para no duplicar el giro del stick derecho en Quest 2
+        xriTurnProviderDetectado = false;
+        MonoBehaviour[] mbs = FindObjectsByType<MonoBehaviour>(FindObjectsInactive.Exclude);
+        for (int i = 0; i < mbs.Length; i++)
+        {
+            MonoBehaviour mb = mbs[i];
+            if (mb == null || !mb.enabled || !mb.gameObject.activeInHierarchy) continue;
+            string tn = mb.GetType().Name;
+            if (tn.Contains("TurnProvider"))
+            {
+                xriTurnProviderDetectado = true;
+                break;
+            }
+        }
     }
 
     private void Update()
@@ -81,6 +184,12 @@ public sealed class CiudadCameraLook : MonoBehaviour
         {
             smoothedStick = Vector2.zero;
             return;
+        }
+
+        if (!characterControllerAjustado || Time.unscaledTime >= proximoChequeoRig)
+        {
+            proximoChequeoRig = Time.unscaledTime + 4f;
+            AsegurarLocomocionEscalerasYTurnVR();
         }
 
         if (playerCamera == null)
@@ -99,6 +208,12 @@ public sealed class CiudadCameraLook : MonoBehaviour
         if (visorVRRealConectado)
         {
             DesactivarSimuladorSiHayVisorReal();
+            // Si XRI ya maneja el giro del stick derecho en Quest 2, no duplicar rotación
+            if (xriTurnProviderDetectado)
+            {
+                smoothedStick = Vector2.zero;
+                return;
+            }
         }
 
         if (TryReadControllerStick(out Vector2 stick))

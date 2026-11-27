@@ -146,6 +146,18 @@ public class FinalTurnoVR : MonoBehaviour
         }
     }
 
+    public static void DispararDerrotaGlobal(TipoAnomalia entidadAtacante, string motivoDerrota)
+    {
+        FinalTurnoVR gestor = Instancia != null ? Instancia : FindAnyObjectByType<FinalTurnoVR>(FindObjectsInactive.Include);
+        if (gestor == null)
+        {
+            GameObject host = TabletSistemaVR.Instancia != null ? TabletSistemaVR.Instancia.gameObject : new GameObject("Gestor_FinalTurnoVR");
+            gestor = host.GetComponent<FinalTurnoVR>();
+            if (gestor == null) gestor = host.AddComponent<FinalTurnoVR>();
+        }
+        gestor.ActivarDerrota(entidadAtacante, motivoDerrota);
+    }
+
     public void ActivarDerrota(TipoAnomalia entidadAtacante, string motivoDerrota)
     {
         if (EstaEnSecuenciaFinal) return;
@@ -184,11 +196,17 @@ public class FinalTurnoVR : MonoBehaviour
         if (TabletSistemaVR.Instancia != null)
             TabletSistemaVR.Instancia.gameObject.SetActive(false);
 
-        // Enderezar cualquier inclinación lateral (roll en Z) que haya dejado el simulador de PC
+        float nearClipPrevio = cam != null ? cam.nearClipPlane : 0.1f;
+
+        // Enderezar roll SOLO en Simulador de PC (NUNCA forzar rotación de cámara en visor VR real para cero náusea)
         if (cam != null)
         {
-            Vector3 eul = cam.transform.localEulerAngles;
-            cam.transform.localEulerAngles = new Vector3(0f, eul.y, 0f);
+            if (!CiudadCameraLook.EsVisorVRRealActivo())
+            {
+                Vector3 eul = cam.transform.localEulerAngles;
+                cam.transform.localEulerAngles = new Vector3(0f, eul.y, 0f);
+            }
+            cam.nearClipPlane = 0.05f;
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = Color.black;
             cam.cullingMask = (1 << CapaScreamer);
@@ -196,11 +214,12 @@ public class FinalTurnoVR : MonoBehaviour
 
         // 1. Instanciar el modelo 3D de la anomalía en la capa exclusiva del Screamer encuadrando su rostro
         GameObject modeloScreamer = InstanciarModeloEntidadParaScreamer(entidadAtacante, cam != null ? cam.transform : transform);
+        Transform huesoCabezaScreamer = modeloScreamer != null ? BuscarHuesoCabeza(modeloScreamer.transform) : null;
 
         // Capturar 4 frames VHS posterizados con desgarros analógicos reales del ROSTRO sobre negro puro (#000000)
         Texture2D[] framesRetratoVHS = CapturarFramesRetratoVHSPosterizado(modeloScreamer, entidadAtacante);
 
-        // Luz puntual intensa sobre el rostro del screamer (desactivada en PureForm para que sea sombra negra pura en 3D)
+        // Luz puntual intensa sobre el rostro del screamer (con contraluz tenue en PureForm para recortar su silueta y ojos blancos)
         GameObject objLuzScreamer = new GameObject("Luz_Screamer_VR");
         objLuzScreamer.layer = CapaScreamer;
         if (cam != null) objLuzScreamer.transform.SetParent(cam.transform, false);
@@ -211,13 +230,13 @@ public class FinalTurnoVR : MonoBehaviour
             ? new Color(0.88f, 0.90f, 0.96f, 1f)
             : new Color(1f, 0.90f, 0.88f, 1f);
         bool esEntidadUnlitOscura = entidadAtacante == TipoAnomalia.PureForm || entidadAtacante == TipoAnomalia.Preacher;
-        luzScreamer.intensity = esEntidadUnlitOscura ? 0f : (entidadAtacante == TipoAnomalia.Flawed ? 2.25f : 4.8f);
+        luzScreamer.intensity = esEntidadUnlitOscura ? 0f : (entidadAtacante == TipoAnomalia.Flawed ? 2.45f : 4.8f);
         luzScreamer.range = 2.6f;
         luzScreamer.shadows = LightShadows.None;
         luzScreamer.renderMode = LightRenderMode.ForcePixel;
         luzScreamer.cullingMask = (1 << CapaScreamer);
         if (esEntidadUnlitOscura && cam != null)
-            cam.backgroundColor = new Color(0.045f, 0.048f, 0.058f, 1f);
+            cam.backgroundColor = new Color(0.065f, 0.068f, 0.082f, 1f);
 
         if (fuenteAudioFinal != null && sonidoScreamer != null)
         {
@@ -228,13 +247,12 @@ public class FinalTurnoVR : MonoBehaviour
             fuenteAudioFinal.Play();
         }
 
-        // Sacudida violenta frente al visor sincronizada al milisegundo con la duración real del screamer extraído (~1.02s) antes del corte VHS
+        // Anclaje en vivo frame a frame del ROSTRO exacto frente a los ojos del jugador:
+        // Garantiza al 100% que NUNCA quede abajo ni fuera de cuadro aunque el jugador mirara la Tablet o el Animator mueva el cuerpo!
         float duracionScreamer = (sonidoScreamer != null && sonidoScreamer.length > 0.35f)
             ? sonidoScreamer.length
             : 1.03f;
         float tScreamer = 0f;
-        Vector3 posBaseScreamer = modeloScreamer != null ? modeloScreamer.transform.localPosition : new Vector3(0f, -0.5f, 0.66f);
-        Quaternion rotBaseScreamer = modeloScreamer != null ? modeloScreamer.transform.localRotation : Quaternion.Euler(0f, 180f, 0f);
 
         while (tScreamer < duracionScreamer)
         {
@@ -243,37 +261,43 @@ public class FinalTurnoVR : MonoBehaviour
             if (TabletSistemaVR.Instancia != null)
                 TabletSistemaVR.Instancia.EnviarHapticAmbosMandos(1.0f, 0.1f);
 
-            if (modeloScreamer != null)
+            if (modeloScreamer != null && cam != null)
             {
                 float progreso = Mathf.Clamp01(tScreamer / duracionScreamer);
-                float acercamientoZ = Mathf.Lerp(0.12f, -0.06f, progreso);
-                Vector3 sacudidaPos = new Vector3(
-                    Random.Range(-0.042f, 0.042f),
-                    Random.Range(-0.035f, 0.035f),
-                    acercamientoZ + Random.Range(-0.02f, 0.02f)
-                );
+                float distFrente = Mathf.Lerp(0.72f, 0.52f, progreso);
+
                 Quaternion sacudidaRot = Quaternion.Euler(
-                    Random.Range(-10f, 10f),
-                    Random.Range(-14f, 14f),
-                    Random.Range(-12f, 12f)
+                    Random.Range(-8f, 8f),
+                    Random.Range(-12f, 12f),
+                    Random.Range(-10f, 10f)
                 );
-                modeloScreamer.transform.localPosition = posBaseScreamer + sacudidaPos;
-                modeloScreamer.transform.localRotation = rotBaseScreamer * sacudidaRot;
+
+                // Orientar siempre el rostro directamente hacia la cámara actual del jugador
+                Vector3 mirarHaciaCam = -cam.transform.forward;
+                modeloScreamer.transform.rotation = Quaternion.LookRotation(mirarHaciaCam, cam.transform.up) * sacudidaRot;
+
+                Vector3 puntoRostroActual = ObtenerPosicionRostroEnVivo(modeloScreamer, huesoCabezaScreamer);
+                Vector3 metaFrenteOjos = cam.transform.position
+                                         + cam.transform.forward * (distFrente + Random.Range(-0.015f, 0.015f))
+                                         + cam.transform.right * Random.Range(-0.036f, 0.036f)
+                                         + cam.transform.up * (Random.Range(-0.030f, 0.030f) - 0.02f);
+
+                modeloScreamer.transform.position += (metaFrenteOjos - puntoRostroActual);
             }
 
             if (esEntidadUnlitOscura)
             {
                 if (cam != null)
                 {
-                    float penumbra = Random.value < 0.28f ? Random.Range(0.09f, 0.14f) : Random.Range(0.038f, 0.065f);
-                    cam.backgroundColor = new Color(penumbra * 0.92f, penumbra * 0.95f, penumbra * 1.08f, 1f);
+                    float penumbra = Random.value < 0.32f ? Random.Range(0.11f, 0.16f) : Random.Range(0.055f, 0.085f);
+                    cam.backgroundColor = new Color(penumbra * 0.96f, penumbra * 0.92f, penumbra * 1.08f, 1f);
                 }
             }
             else if (luzScreamer != null)
             {
                 luzScreamer.intensity = entidadAtacante == TipoAnomalia.Flawed
-                    ? Random.Range(1.35f, 2.55f)
-                    : Random.Range(2.2f, 5.8f);
+                    ? Random.Range(1.55f, 2.75f)
+                    : Random.Range(2.4f, 5.8f);
             }
 
             yield return null;
@@ -286,6 +310,7 @@ public class FinalTurnoVR : MonoBehaviour
 
         if (cam != null)
         {
+            cam.nearClipPlane = nearClipPrevio;
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = Color.black;
             cam.cullingMask = (1 << CapaUI);
@@ -825,6 +850,36 @@ public class FinalTurnoVR : MonoBehaviour
         return null;
     }
 
+    private static Vector3 ObtenerPosicionRostroEnVivo(GameObject modeloScreamer, Transform huesoCabeza)
+    {
+        if (huesoCabeza != null && huesoCabeza.gameObject.activeInHierarchy)
+        {
+            return huesoCabeza.position + modeloScreamer.transform.up * 0.03f;
+        }
+
+        if (modeloScreamer != null)
+        {
+            Renderer[] rends = modeloScreamer.GetComponentsInChildren<Renderer>(false);
+            if (rends.Length == 0)
+                rends = modeloScreamer.GetComponentsInChildren<Renderer>(true);
+
+            bool iniciado = false;
+            Bounds b = default;
+            for (int i = 0; i < rends.Length; i++)
+            {
+                if (rends[i] == null || rends[i].gameObject.name.Contains("Halo")) continue;
+                if (!iniciado) { b = rends[i].bounds; iniciado = true; }
+                else b.Encapsulate(rends[i].bounds);
+            }
+            if (iniciado)
+            {
+                return new Vector3(b.center.x, b.min.y + b.size.y * 0.86f, b.center.z);
+            }
+            return modeloScreamer.transform.position;
+        }
+        return Vector3.zero;
+    }
+
     private GameObject InstanciarModeloEntidadParaScreamer(TipoAnomalia tipo, Transform camTransform)
     {
         string nombreObjetoEscena = ObtenerNombreObjetoEntidad(tipo);
@@ -833,9 +888,9 @@ public class FinalTurnoVR : MonoBehaviour
 
         GameObject contenedor = new GameObject("Screamer_Entidad_3D_VR");
         contenedor.layer = CapaScreamer;
-        contenedor.transform.SetParent(camTransform, false);
-        contenedor.transform.localPosition = new Vector3(0f, -0.60f, 0.66f);
-        contenedor.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        // No emparentar con pitch local inclinado: controlar posición/rotación mundial frente a la cámara en cada frame
+        contenedor.transform.position = camTransform.position + camTransform.forward * 0.68f - camTransform.up * 1.45f;
+        contenedor.transform.rotation = Quaternion.LookRotation(-camTransform.forward, camTransform.up);
         contenedor.transform.localScale = Vector3.one;
 
         if (visualOriginal != null)
@@ -845,9 +900,19 @@ public class FinalTurnoVR : MonoBehaviour
             clon.SetActive(true);
             clon.transform.localPosition = Vector3.zero;
             clon.transform.localRotation = Quaternion.identity;
+            clon.transform.localScale = Vector3.one;
 
             AnimadorEntidadTerror anim = clon.GetComponent<AnimadorEntidadTerror>();
             if (anim != null) Destroy(anim);
+
+            // Eliminar RigBuilder / Rig de mirada en el clon del Screamer para que no tuerza el cuello fuera de eje
+            foreach (MonoBehaviour mb in clon.GetComponentsInChildren<MonoBehaviour>(true))
+            {
+                if (mb == null) continue;
+                string tn = mb.GetType().Name;
+                if (tn == "RigBuilder" || tn == "Rig" || tn == "MultiAimConstraint")
+                    Destroy(mb);
+            }
 
             if (tipo == TipoAnomalia.PureForm)
                 ObjetoAnomalia.AplicarMaterialesAbismalesPureForm(clon.transform);
@@ -855,24 +920,78 @@ public class FinalTurnoVR : MonoBehaviour
                 ObjetoAnomalia.AplicarMaterialesTerrorPreacher(clon.transform);
             else if (tipo == TipoAnomalia.Flawed)
             {
-                if (clon.transform.childCount > 1)
+                Transform varianteActiva = null;
+                if (clon.transform.childCount > 0)
                 {
-                    bool algunHijoActivo = false;
                     for (int c = 0; c < clon.transform.childCount; c++)
                     {
-                        if (clon.transform.GetChild(c).gameObject.activeSelf)
+                        Transform ch = clon.transform.GetChild(c);
+                        if (ch.gameObject.activeSelf)
                         {
-                            if (!algunHijoActivo) algunHijoActivo = true;
-                            else clon.transform.GetChild(c).gameObject.SetActive(false);
+                            if (varianteActiva == null) varianteActiva = ch;
+                            else ch.gameObject.SetActive(false);
                         }
                     }
-                    if (!algunHijoActivo)
+                    if (varianteActiva == null)
                     {
                         int idxRand = Random.Range(0, clon.transform.childCount);
-                        clon.transform.GetChild(idxRand).gameObject.SetActive(true);
+                        varianteActiva = clon.transform.GetChild(idxRand);
+                        varianteActiva.gameObject.SetActive(true);
                     }
                 }
+                if (varianteActiva != null)
+                {
+                    varianteActiva.localPosition = Vector3.zero;
+                    // En CabezaGirada el cuerpo mira hacia atrás pero la cabeza mira hacia +Z local del contenedor
+                    if (!varianteActiva.name.ToLowerInvariant().Contains("cabezagirada"))
+                        varianteActiva.localRotation = Quaternion.identity;
+                }
                 ObjetoAnomalia.AplicarMaterialesMateFlawed(clon.transform);
+            }
+
+            // Forzar pose erguida de terror en el Animator y evaluarla INMEDIATAMENTE (evita que el Flawed sentado baje 55 cm en el frame siguiente!)
+            Animator animSkeleton = clon.GetComponentInChildren<Animator>(false);
+            if (animSkeleton != null && animSkeleton.runtimeAnimatorController != null)
+            {
+                animSkeleton.applyRootMotion = false;
+                animSkeleton.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                if (tipo == TipoAnomalia.Flawed)
+                {
+                    bool esSentado = animSkeleton.gameObject.name.ToLowerInvariant().Contains("traje");
+                    if (esSentado)
+                    {
+                        animSkeleton.Play("SitToStand", 0, 0.92f);
+                        animSkeleton.speed = 0.15f;
+                    }
+                    else if (animSkeleton.gameObject.name.ToLowerInvariant().Contains("ventana"))
+                    {
+                        animSkeleton.Play("WindowPress", 0, 0.25f);
+                        animSkeleton.speed = 1.25f;
+                    }
+                    else
+                    {
+                        animSkeleton.Play("Agony", 0, 0.20f);
+                        animSkeleton.speed = 1.25f;
+                    }
+                }
+                else if (tipo == TipoAnomalia.PureForm)
+                {
+                    animSkeleton.Play("StalkerSnap", 0, 0.20f);
+                    animSkeleton.speed = 1.30f;
+                }
+                else if (tipo == TipoAnomalia.Tulpa)
+                {
+                    animSkeleton.transform.localPosition = Vector3.zero;
+                    animSkeleton.transform.localRotation = Quaternion.identity;
+                    animSkeleton.Play("MirrorReach", 0, 0.30f);
+                    animSkeleton.speed = 1.25f;
+                }
+                else if (tipo == TipoAnomalia.Preacher)
+                {
+                    animSkeleton.Play("ClosetWhisper", 0, 0.15f);
+                    animSkeleton.speed = 1.15f;
+                }
+                animSkeleton.Update(0.04f);
             }
 
             AsignarCapaRecursiva(clon.transform, CapaScreamer);
@@ -899,38 +1018,19 @@ public class FinalTurnoVR : MonoBehaviour
                 }
             }
 
-            Renderer[] rends = clon.GetComponentsInChildren<Renderer>(false);
-            if (rends.Length == 0)
-                rends = clon.GetComponentsInChildren<Renderer>(true);
-            if (rends.Length > 0)
-            {
-                Bounds b = rends[0].bounds;
-                for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
-
-                Transform huesoCabeza = BuscarHuesoCabeza(clon.transform);
-                float alturaRostro = (huesoCabeza != null)
-                    ? huesoCabeza.position.y + 0.03f
-                    : (b.min.y + b.size.y * 0.88f);
-                Vector3 centroHorizontal = (huesoCabeza != null)
-                    ? new Vector3(huesoCabeza.position.x, alturaRostro, huesoCabeza.position.z)
-                    : new Vector3(b.center.x, alturaRostro, b.center.z);
-
-                Vector3 posFrenteCam = camTransform.position + camTransform.forward * 0.66f;
-                Vector3 delta = new Vector3(
-                    posFrenteCam.x - centroHorizontal.x,
-                    posFrenteCam.y - alturaRostro,
-                    posFrenteCam.z - centroHorizontal.z
-                );
-                clon.transform.position += delta;
-            }
+            Transform huesoCabeza = BuscarHuesoCabeza(contenedor.transform);
+            Vector3 posRostroInicial = ObtenerPosicionRostroEnVivo(contenedor, huesoCabeza);
+            Vector3 posFrenteCam = camTransform.position + camTransform.forward * 0.68f - camTransform.up * 0.02f;
+            contenedor.transform.position += (posFrenteCam - posRostroInicial);
         }
         else
         {
             GameObject esfera = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             esfera.layer = CapaScreamer;
             esfera.transform.SetParent(contenedor.transform, false);
-            esfera.transform.localPosition = new Vector3(0f, 0.65f, 0f);
+            esfera.transform.localPosition = Vector3.zero;
             esfera.transform.localScale = new Vector3(0.36f, 0.46f, 0.32f);
+            contenedor.transform.position = camTransform.position + camTransform.forward * 0.66f;
         }
 
         return contenedor;
@@ -1034,6 +1134,7 @@ public class FinalTurnoVR : MonoBehaviour
 
             RenderTexture rt = RenderTexture.GetTemporary(w, h, 16, RenderTextureFormat.ARGB32);
             Camera camSnap = camObj.AddComponent<Camera>();
+            camSnap.stereoTargetEye = StereoTargetEyeMask.None;
             camSnap.clearFlags = CameraClearFlags.SolidColor;
             // SIEMPRE negro absoluto (#000000): cero recuadros blancos o grises alrededor de la entidad
             camSnap.backgroundColor = Color.black;

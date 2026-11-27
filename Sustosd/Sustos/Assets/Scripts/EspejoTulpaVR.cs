@@ -235,6 +235,7 @@ public sealed class EspejoTulpaVR : MonoBehaviour
             camaraEspejo = camHija.gameObject.AddComponent<Camera>();
 
         camaraEspejo.targetTexture = texturaReflejo;
+        camaraEspejo.stereoTargetEye = StereoTargetEyeMask.None;
         camaraEspejo.fieldOfView = 62f;
         camaraEspejo.nearClipPlane = 0.25f;
         camaraEspejo.farClipPlane = 8.5f;
@@ -248,6 +249,60 @@ public sealed class EspejoTulpaVR : MonoBehaviour
             camData = camaraEspejo.gameObject.AddComponent<UniversalAdditionalCameraData>();
         camData.renderShadows = false;
         camData.renderPostProcessing = false;
+    }
+
+    public void DispararReaccionReporteEnEspejo(float duracion = 2.35f)
+    {
+        if (!gameObject.activeInHierarchy) return;
+        StopAllCoroutines();
+        StartCoroutine(RutinaReaccionReporteEspejo(duracion));
+    }
+
+    private System.Collections.IEnumerator RutinaReaccionReporteEspejo(float duracion)
+    {
+        Vector3 posInicial = new Vector3(0f, 0.14f, 1.48f);
+        Vector3 posCercaCristal = new Vector3(0f, 0.10f, 0.86f);
+        Color colBaseEspejo = new Color(0.88f, 0.93f, 0.96f, 1f);
+
+        float t = 0f;
+        while (t < duracion)
+        {
+            t += Time.deltaTime;
+            float p = Mathf.Clamp01(t / Mathf.Max(0.2f, duracion * 0.72f));
+            float ease = 1f - Mathf.Pow(1f - p, 3f);
+
+            if (modeloTulpaReflejado != null)
+            {
+                modeloTulpaReflejado.transform.localPosition = Vector3.Lerp(posInicial, posCercaCristal, ease);
+            }
+            if (luzEspectralTulpa != null)
+            {
+                float pulso = Mathf.Sin(t * 38f) > 0f ? 3.8f : 1.1f;
+                luzEspectralTulpa.color = new Color(0.98f, 0.36f, 0.38f, 1f);
+                luzEspectralTulpa.intensity = pulso;
+            }
+            if (materialEspejo != null)
+            {
+                bool destello = Mathf.Sin(t * 44f) > 0.35f;
+                materialEspejo.color = destello ? new Color(1.0f, 0.68f, 0.70f, 1f) : colBaseEspejo;
+            }
+            yield return null;
+        }
+
+        RestaurarEstadoNormalEspejo();
+    }
+
+    public void RestaurarEstadoNormalEspejo()
+    {
+        if (modeloTulpaReflejado != null)
+            modeloTulpaReflejado.transform.localPosition = new Vector3(0f, 0.14f, 1.48f);
+        if (luzEspectralTulpa != null)
+        {
+            luzEspectralTulpa.color = new Color(0.95f, 0.78f, 0.78f, 1f);
+            luzEspectralTulpa.intensity = 1.6f;
+        }
+        if (materialEspejo != null)
+            materialEspejo.color = new Color(0.88f, 0.93f, 0.96f, 1f);
     }
 
     public void VincularModeloTulpaEnCapaEspejo()

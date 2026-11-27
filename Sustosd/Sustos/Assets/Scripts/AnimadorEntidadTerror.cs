@@ -22,6 +22,7 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
     [Header("Variantes Esqueléticas Flawed")]
     public bool modoFlawedSentado = false;
     public bool modoFlawedEspaldas = false;
+    public bool modoFlawedVentana = false;
 
     private Vector3 posBaseLocal;
     private Quaternion rotBaseLocal;
@@ -36,6 +37,7 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
     private float proximoCambioClip;
     private int indiceClipAnterior = -1;
     private bool enSecuenciaSitToStand = false;
+    private bool enReaccionReporte = false;
 
     private float tiempoProximoEspasmo;
     private float duracionEspasmoActual;
@@ -60,6 +62,12 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         "SittingDisbelief",
         "SittingRubbingArm",
         "SittingDodges"
+    };
+
+    private static readonly string[] EstadosFlawedVentana =
+    {
+        "WindowStalk",
+        "WindowPress"
     };
 
     private static readonly string[] EstadosPureFormDirecto =
@@ -87,6 +95,7 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
     {
         GuardarTransformBase();
         enSecuenciaSitToStand = false;
+        enReaccionReporte = false;
         tiempoMiradoAcecho = 0f;
         factorRetraccionAcecho = 0f;
         tiempoProximoEspasmo = Time.time + Random.Range(1.2f, 2.8f);
@@ -105,11 +114,13 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
             escalaBaseLocal = Vector3.one;
     }
 
-    public void ConfigurarModoVarianteFlawed(bool esSentado, bool esEspaldas)
+    public void ConfigurarModoVarianteFlawed(bool esSentado, bool esEspaldas, bool esVentana = false)
     {
         modoFlawedSentado = esSentado;
         modoFlawedEspaldas = esEspaldas;
+        modoFlawedVentana = esVentana;
         enSecuenciaSitToStand = false;
+        enReaccionReporte = false;
         if (isActiveAndEnabled)
         {
             InicializarAnimatorYAnimationRigging();
@@ -119,15 +130,60 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
 
     public void DispararSitToStandPorReporte()
     {
-        if (!modoFlawedSentado || enSecuenciaSitToStand) return;
-        enSecuenciaSitToStand = true;
+        DispararReaccionPorReporte();
+    }
+
+    public void DispararReaccionPorReporte()
+    {
+        if (enReaccionReporte) return;
+        enReaccionReporte = true;
 
         if (animadorActivo == null)
             InicializarAnimatorYAnimationRigging();
 
-        if (animadorActivo != null && animadorActivo.runtimeAnimatorController != null)
+        if (animadorActivo == null || animadorActivo.runtimeAnimatorController == null)
+            return;
+
+        proximoCambioClip = float.MaxValue;
+        animadorActivo.speed = 1.16f;
+
+        switch (tipoEntidad)
         {
-            animadorActivo.CrossFadeInFixedTime("SitToStand", 0.16f, 0, 0f);
+            case TipoAnomalia.Flawed:
+                if (modoFlawedSentado)
+                {
+                    enSecuenciaSitToStand = true;
+                    animadorActivo.CrossFadeInFixedTime("SitToStand", 0.14f, 0, 0f);
+                }
+                else if (modoFlawedVentana)
+                {
+                    animadorActivo.CrossFadeInFixedTime("WindowPress", 0.12f, 0, 0f);
+                }
+                else
+                {
+                    if (modoFlawedEspaldas)
+                    {
+                        modoFlawedEspaldas = false;
+                        mirarAlJugador = true;
+                    }
+                    animadorActivo.CrossFadeInFixedTime("Agony", 0.14f, 0, 0f);
+                }
+                break;
+
+            case TipoAnomalia.PureForm:
+                if (modoPureFormEscondido)
+                {
+                    modoPureFormEscondido = false;
+                    factorRetraccionAcecho = 0f;
+                    transform.localScale = new Vector3(Mathf.Abs(escalaBaseLocal.x), escalaBaseLocal.y, escalaBaseLocal.z);
+                    transform.localPosition = posBaseLocal;
+                }
+                animadorActivo.CrossFadeInFixedTime("StalkerSnap", 0.10f, 0, 0f);
+                break;
+
+            case TipoAnomalia.Tulpa:
+                animadorActivo.CrossFadeInFixedTime("MirrorReach", 0.12f, 0, 0f);
+                break;
         }
     }
 
@@ -139,7 +195,7 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         if (tipoEntidad == TipoAnomalia.Corpse)
             return;
 
-        // Buscar el Animator del submodelo actualmente activo (ej. Flawed_Variante_0..4 o Modelo_3D_*)
+        // Buscar el Animator del submodelo actualmente activo (ej. Flawed_Variante_0..5 o Modelo_3D_*)
         Animator[] anims = GetComponentsInChildren<Animator>(false);
         if (anims != null && anims.Length > 0)
             animadorActivo = anims[0];
@@ -283,6 +339,12 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
                     CambiarAEstadoAleatorio(EstadosFlawedSentado, 0.05f);
                     proximoCambioClip = Time.time + Random.Range(4.8f, 8.2f);
                 }
+                else if (modoFlawedVentana)
+                {
+                    animadorActivo.Play("WindowStalk", 0, Random.Range(0f, 0.6f));
+                    indiceClipAnterior = 0;
+                    proximoCambioClip = Time.time + Random.Range(5.0f, 8.5f);
+                }
                 else
                 {
                     // Empezar en postura inquietante base y luego alternar con Agony, LookingAround y TwitchStare
@@ -351,7 +413,7 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         ActualizarPesoRigMirada();
 
         // Alternar clips esqueléticos de Mixamo + Custom de forma fluida
-        if (!enSecuenciaSitToStand && animadorActivo != null && animadorActivo.runtimeAnimatorController != null && Time.time >= proximoCambioClip)
+        if (!enSecuenciaSitToStand && !enReaccionReporte && animadorActivo != null && animadorActivo.runtimeAnimatorController != null && Time.time >= proximoCambioClip)
         {
             if (tipoEntidad == TipoAnomalia.Flawed)
             {
@@ -359,6 +421,11 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
                 {
                     CambiarAEstadoAleatorio(EstadosFlawedSentado, 0.42f);
                     proximoCambioClip = Time.time + Random.Range(5.0f, 8.8f);
+                }
+                else if (modoFlawedVentana)
+                {
+                    CambiarAEstadoAleatorio(EstadosFlawedVentana, 0.40f);
+                    proximoCambioClip = Time.time + (indiceClipAnterior == 1 ? Random.Range(3.2f, 4.6f) : Random.Range(5.2f, 8.6f));
                 }
                 else
                 {
@@ -387,10 +454,11 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         }
         else if (tipoEntidad == TipoAnomalia.Flawed)
         {
-            if (!modoFlawedSentado && mirarAlJugador)
+            if (!modoFlawedSentado && !modoFlawedVentana && mirarAlJugador)
             {
-                // De pie: gira muy lentamente el cuerpo hacia donde camina el jugador (en sentado permanece fijo en la silla!)
-                OrientarCuerpoLentoHaciaJugador(1.65f);
+                float velGiro = enReaccionReporte ? 5.2f : 1.65f;
+                // De pie: gira lentamente hacia el jugador (o rápido si acaba de ser reportado)
+                OrientarCuerpoLentoHaciaJugador(velGiro);
             }
         }
     }
@@ -413,8 +481,9 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
                 if (dot > 0.05f || tipoEntidad == TipoAnomalia.Tulpa)
                 {
                     // Reducir el aim durante Agony para no pelear con el retorcimiento completo de cabeza
-                    bool enAgonia = (tipoEntidad == TipoAnomalia.Flawed && !modoFlawedSentado && indiceClipAnterior == 4) ||
-                                    (tipoEntidad == TipoAnomalia.Tulpa && indiceClipAnterior == 3);
+                    bool enAgonia = (!enReaccionReporte && tipoEntidad == TipoAnomalia.Flawed && !modoFlawedSentado && !modoFlawedVentana && indiceClipAnterior == 4) ||
+                                    (enReaccionReporte && tipoEntidad == TipoAnomalia.Flawed && !modoFlawedSentado && !modoFlawedVentana) ||
+                                    (!enReaccionReporte && tipoEntidad == TipoAnomalia.Tulpa && indiceClipAnterior == 3);
                     metaPeso = enAgonia ? 0.15f : pesoMaximoMirada;
                 }
             }
@@ -455,8 +524,10 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
         }
         else
         {
-            transform.localPosition = posBaseLocal;
-            OrientarCuerpoLentoHaciaJugador(2.6f);
+            // Al ser reportado, avanza un paso corto y amenazante hacia el frente antes del apagón
+            Vector3 avanceReporte = enReaccionReporte ? new Vector3(0f, 0f, 0.28f) : Vector3.zero;
+            transform.localPosition = Vector3.MoveTowards(transform.localPosition, posBaseLocal + avanceReporte, Time.deltaTime * 1.3f);
+            OrientarCuerpoLentoHaciaJugador(enReaccionReporte ? 5.5f : 2.6f);
         }
     }
 
@@ -506,9 +577,9 @@ public sealed class AnimadorEntidadTerror : MonoBehaviour
     private void LateUpdate()
     {
         // Guardia anti-clipping en tiempo real tras evaluar Animator + Rigging:
-        // Garantiza al 100% que NINGUNA entidad (ej. Flawed en Recámara 3 sobre la Cocina, PureForm, Preacher o Tulpa)
+        // Garantiza al 100% que NINGUNA entidad interior (ej. Flawed en Recámara 3 sobre la Cocina, PureForm, Preacher o Tulpa)
         // hunda los pies o piernas por debajo de la losa del piso hacia el techo del cuarto inferior.
-        if (tipoEntidad == TipoAnomalia.Corpse || animadorActivo == null) return;
+        if (tipoEntidad == TipoAnomalia.Corpse || modoFlawedVentana || animadorActivo == null) return;
         if (transform.parent == null) return;
 
         if (renderersCuerpoCache == null || renderersCuerpoCache.Length == 0)

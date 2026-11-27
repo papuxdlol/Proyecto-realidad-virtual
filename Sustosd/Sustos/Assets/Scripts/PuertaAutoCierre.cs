@@ -30,7 +30,9 @@ public class PuertaAutoCierre : MonoBehaviour
     private Vector3 puntoBisagraMundial;
     private Vector3 posCerradaMundial;
     private Quaternion rotCerradaMundial;
+    private Vector3 vectorHojaCerradaXZ = Vector3.right;
     private float anguloActual = 0f;
+    private float anguloAbiertaObjetivoActual = 90f;
     private Coroutine rutinaAutoCierre;
     private Coroutine rutinaDelayAccion;
     private Coroutine rutinaTemblorEntidad;
@@ -40,6 +42,16 @@ public class PuertaAutoCierre : MonoBehaviour
     private float ultimoTiempoInteraccion = -10f;
     private bool pendienteSonidoCierre = false;
     private bool cierreEsAzote = false;
+
+    // Agarre y jalón físico con controles VR (Meta Quest 2)
+    private IXRInteractor interactorAgarrando;
+    private Transform transformManoAgarrando;
+    private Vector3 posManoInicioAgarre;
+    private float tiempoInicioAgarre = -10f;
+    private float anguloInicioAgarre = 0f;
+    private float ultimoAnguloHaptic = 0f;
+    private bool arrastrandoConManoVR = false;
+    private bool sonidoArrastreReproducido = false;
 
     private static AudioClip clipPuertaProcedural;
 
@@ -291,6 +303,7 @@ public class PuertaAutoCierre : MonoBehaviour
         if (interactable != null)
         {
             interactable.selectEntered.AddListener(OnSelect);
+            interactable.selectExited.AddListener(OnSelectExit);
             interactable.activated.AddListener(OnActivate);
         }
     }
@@ -300,12 +313,113 @@ public class PuertaAutoCierre : MonoBehaviour
         if (interactable != null)
         {
             interactable.selectEntered.RemoveListener(OnSelect);
+            interactable.selectExited.RemoveListener(OnSelectExit);
             interactable.activated.RemoveListener(OnActivate);
+        }
+        interactorAgarrando = null;
+        transformManoAgarrando = null;
+        arrastrandoConManoVR = false;
+    }
+
+    private Vector3 ObtenerVectorHojaCerradaXZ()
+    {
+        if (hitboxPositivo != null)
+        {
+            Quaternion invRotActual = Quaternion.Inverse(transform.rotation);
+            Vector3 offsetCentroLocal = invRotActual * (hitboxPositivo.transform.position - transform.position);
+            Vector3 centroCerrado = posCerradaMundial + (rotCerradaMundial * offsetCentroLocal);
+            Vector3 v = new Vector3(centroCerrado.x - puntoBisagraMundial.x, 0f, centroCerrado.z - puntoBisagraMundial.z);
+            if (v.sqrMagnitude > 0.0004f)
+                return v.normalized;
+        }
+        return Vector3.right;
+    }
+
+    private void OnSelect(SelectEnterEventArgs args)
+    {
+        Vector3 posRef = Camera.main != null
+            ? ObtenerPuntoMasCercano(Camera.main.transform.position)
+            : ObtenerPosicionMundial();
+
+        if (!InteractorUniversalVR.EstaDentroDeRangoYLineaDeVision(posRef, 2.25f, transform))
+            return;
+
+        Component comp = args.interactorObject as Component;
+        if (comp == null)
+        {
+            ProcesarInteraccion(args.interactorObject);
+            return;
+        }
+
+        interactorAgarrando = args.interactorObject;
+        transformManoAgarrando = comp.transform;
+        posManoInicioAgarre = transformManoAgarrando.position;
+        tiempoInicioAgarre = Time.unscaledTime;
+        anguloInicioAgarre = anguloActual;
+        ultimoAnguloHaptic = anguloActual;
+        arrastrandoConManoVR = false;
+        sonidoArrastreReproducido = false;
+        vectorHojaCerradaXZ = ObtenerVectorHojaCerradaXZ();
+
+        if (rutinaAutoCierre != null)
+        {
+            StopCoroutine(rutinaAutoCierre);
+            rutinaAutoCierre = null;
+        }
+
+        if (args.interactorObject is XRBaseInputInteractor inputInteractor)
+            inputInteractor.SendHapticImpulse(0.32f, 0.06f);
+    }
+
+    private void OnSelectExit(SelectExitEventArgs args)
+    {
+        if (interactorAgarrando == null)
+            return;
+        if (args != null && args.interactorObject != null && args.interactorObject != interactorAgarrando)
+            return;
+
+        IXRInteractor interactorPrevio = interactorAgarrando;
+        interactorAgarrando = null;
+        transformManoAgarrando = null;
+
+        if (!arrastrandoConManoVR)
+        {
+            // Toque/clic rápido (Simulador PC o clic corto en VR): alternar suavemente
+            anguloAbiertaObjetivoActual = anguloAbierta;
+            if (interactorPrevio is XRBaseInputInteractor inputInteractor)
+                inputInteractor.SendHapticImpulse(0.50f, 0.12f);
+            AlternarPuerta();
+            return;
+        }
+
+        arrastrandoConManoVR = false;
+        ultimoTiempoInteraccion = Time.unscaledTime;
+
+        // Al soltar tras jalar/empujar físicamente la puerta en Meta Quest 2:
+        if (Mathf.Abs(anguloActual) <= 8.5f)
+        {
+            CerrarPuerta(false);
+        }
+        else
+        {
+            estaAbierta = true;
+            abiertaPorAnomalia = false;
+            entreabiertaPorPreacher = false;
+            pendienteSonidoCierre = false;
+            anguloAbiertaObjetivoActual = anguloActual;
+
+            if (rutinaAutoCierre != null) StopCoroutine(rutinaAutoCierre);
+            rutinaAutoCierre = StartCoroutine(TemporizadorCierre());
         }
     }
 
-    private void OnSelect(SelectEnterEventArgs args) => ProcesarInteraccion(args.interactorObject);
-    private void OnActivate(ActivateEventArgs args) => ProcesarInteraccion(args.interactorObject);
+    private void OnActivate(ActivateEventArgs args)
+    {
+        // Si ya está agarrando con Select/Grip, no disparar doble toggle con Trigger
+        if (interactorAgarrando != null)
+            return;
+        ProcesarInteraccion(args.interactorObject);
+    }
 
     void OnMouseDown()
     {
@@ -320,9 +434,10 @@ public class PuertaAutoCierre : MonoBehaviour
             ? ObtenerPuntoMasCercano(Camera.main.transform.position)
             : ObtenerPosicionMundial();
 
-        if (!InteractorUniversalVR.EstaDentroDeRangoYLineaDeVision(posRef, 2.15f, transform))
+        if (!InteractorUniversalVR.EstaDentroDeRangoYLineaDeVision(posRef, 2.25f, transform))
             return;
 
+        anguloAbiertaObjetivoActual = anguloAbierta;
         if (interactor is XRBaseInputInteractor inputInteractor)
             inputInteractor.SendHapticImpulse(0.55f, 0.14f);
 
@@ -336,6 +451,7 @@ public class PuertaAutoCierre : MonoBehaviour
 
         ultimaInteraccionFrame = Time.frameCount;
         ultimoTiempoInteraccion = Time.unscaledTime;
+        anguloAbiertaObjetivoActual = anguloAbierta;
 
         if (Application.isPlaying && gameObject.activeInHierarchy && delayAccion > 0.01f)
         {
@@ -368,6 +484,7 @@ public class PuertaAutoCierre : MonoBehaviour
         abiertaPorAnomalia = false;
         entreabiertaPorPreacher = false;
         pendienteSonidoCierre = false;
+        anguloAbiertaObjetivoActual = anguloAbierta;
 
         if (audioPuerta != null && sonidoAbrir != null)
         {
@@ -387,10 +504,14 @@ public class PuertaAutoCierre : MonoBehaviour
             StopCoroutine(rutinaAutoCierre);
             rutinaAutoCierre = null;
         }
+        interactorAgarrando = null;
+        transformManoAgarrando = null;
+        arrastrandoConManoVR = false;
         estaAbierta = true;
         abiertaPorAnomalia = true;
         entreabiertaPorPreacher = false;
         pendienteSonidoCierre = false;
+        anguloAbiertaObjetivoActual = anguloAbierta;
 
         if (audioPuerta != null)
         {
@@ -411,12 +532,16 @@ public class PuertaAutoCierre : MonoBehaviour
             StopCoroutine(rutinaAutoCierre);
             rutinaAutoCierre = null;
         }
+        interactorAgarrando = null;
+        transformManoAgarrando = null;
+        arrastrandoConManoVR = false;
         estaAbierta = true;
         abiertaPorAnomalia = true;
         entreabiertaPorPreacher = true;
         pendienteSonidoCierre = false;
         // Dejar la puerta del clóset ya entreabierta en silencio (sin rechinido de puerta Unknown) para no confundir con anomalía de puerta
         anguloActual = anguloAbierta * 0.42f;
+        anguloAbiertaObjetivoActual = anguloActual;
         AplicarAnguloDesdeCerrada(anguloActual);
     }
 
@@ -456,6 +581,10 @@ public class PuertaAutoCierre : MonoBehaviour
 
     public void CerrarPuerta(bool esAzoteAnomalia)
     {
+        interactorAgarrando = null;
+        transformManoAgarrando = null;
+        arrastrandoConManoVR = false;
+
         if (!estaAbierta && Mathf.Abs(anguloActual) < 0.1f) return;
         estaAbierta = false;
         abiertaPorAnomalia = false;
@@ -474,6 +603,8 @@ public class PuertaAutoCierre : MonoBehaviour
     private IEnumerator TemporizadorCierre()
     {
         yield return new WaitForSeconds(segundosParaCerrarse);
+        while (interactorAgarrando != null)
+            yield return null;
         CerrarPuerta(false);
     }
 
@@ -483,7 +614,7 @@ public class PuertaAutoCierre : MonoBehaviour
     /// </summary>
     public void SacudirPuertaCerradaPorEntidad()
     {
-        if (estaAbierta || !gameObject.activeInHierarchy) return;
+        if (estaAbierta || interactorAgarrando != null || !gameObject.activeInHierarchy) return;
         if (rutinaTemblorEntidad != null) StopCoroutine(rutinaTemblorEntidad);
         rutinaTemblorEntidad = StartCoroutine(RutinaTemblorPuertaCerrada());
     }
@@ -518,9 +649,86 @@ public class PuertaAutoCierre : MonoBehaviour
 
     void Update()
     {
-        float anguloMetaAbierta = entreabiertaPorPreacher ? (anguloAbierta * 0.42f) : anguloAbierta;
+        // Seguimiento físico en vivo cuando el jugador jala o empuja la puerta con el control VR
+        if (interactorAgarrando != null && transformManoAgarrando != null)
+        {
+            Vector3 posRef = Camera.main != null
+                ? ObtenerPuntoMasCercano(Camera.main.transform.position)
+                : ObtenerPosicionMundial();
+
+            if (Vector3.Distance(posRef, transformManoAgarrando.position) > 2.65f)
+            {
+                OnSelectExit(null);
+                return;
+            }
+
+            float duracionAgarre = Time.unscaledTime - tiempoInicioAgarre;
+            Vector3 deltaManoXZ = transformManoAgarrando.position - posManoInicioAgarre;
+            deltaManoXZ.y = 0f;
+
+            if (!arrastrandoConManoVR && (duracionAgarre >= 0.16f || deltaManoXZ.magnitude >= 0.045f))
+            {
+                arrastrandoConManoVR = true;
+            }
+
+            if (arrastrandoConManoVR)
+            {
+                float signoApertura = Mathf.Sign(anguloAbierta);
+                float maxGrados = Mathf.Abs(anguloAbierta);
+
+                float anguloMedio = (anguloInicioAgarre + anguloActual) * 0.5f;
+                Vector3 dirTangenteApertura = Quaternion.AngleAxis(anguloMedio + signoApertura * 90f, Vector3.up) * vectorHojaCerradaXZ;
+                dirTangenteApertura.y = 0f;
+                if (dirTangenteApertura.sqrMagnitude > 0.0001f)
+                    dirTangenteApertura.Normalize();
+
+                float metrosJalados = Vector3.Dot(deltaManoXZ, dirTangenteApertura);
+                float avanceLinealGrados = metrosJalados * 175f; // ~0.51m de jalón = 90 grados completos
+
+                Vector3 vIni = posManoInicioAgarre - puntoBisagraMundial;
+                vIni.y = 0f;
+                Vector3 vAct = transformManoAgarrando.position - puntoBisagraMundial;
+                vAct.y = 0f;
+                float avanceArcoGrados = (vIni.sqrMagnitude > 0.03f && vAct.sqrMagnitude > 0.03f)
+                    ? Vector3.SignedAngle(vIni, vAct, Vector3.up) * signoApertura * 1.15f
+                    : 0f;
+
+                float avanceFinal = Mathf.Abs(avanceLinealGrados) >= Mathf.Abs(avanceArcoGrados)
+                    ? avanceLinealGrados
+                    : avanceArcoGrados;
+
+                float magnitudObjetivo = Mathf.Clamp(Mathf.Abs(anguloInicioAgarre) + avanceFinal, 0f, maxGrados);
+                float anguloMetaMano = magnitudObjetivo * signoApertura;
+
+                anguloActual = Mathf.Lerp(anguloActual, anguloMetaMano, 1f - Mathf.Exp(-18f * Time.deltaTime));
+                AplicarAnguloDesdeCerrada(anguloActual);
+
+                if (!sonidoArrastreReproducido && Mathf.Abs(anguloActual - anguloInicioAgarre) > 7.5f)
+                {
+                    sonidoArrastreReproducido = true;
+                    if (audioPuerta != null && sonidoAbrir != null)
+                    {
+                        audioPuerta.volume = 0.72f;
+                        audioPuerta.pitch = Random.Range(0.92f, 1.02f);
+                        audioPuerta.PlayOneShot(sonidoAbrir);
+                    }
+                }
+
+                if (Mathf.Abs(anguloActual - ultimoAnguloHaptic) >= 14f)
+                {
+                    ultimoAnguloHaptic = anguloActual;
+                    if (interactorAgarrando is XRBaseInputInteractor inputInteractor)
+                        inputInteractor.SendHapticImpulse(0.18f, 0.03f);
+                }
+            }
+            return;
+        }
+
+        float anguloMetaAbierta = entreabiertaPorPreacher
+            ? (anguloAbierta * 0.42f)
+            : (abiertaPorAnomalia ? anguloAbierta : anguloAbiertaObjetivoActual);
         float objetivo = estaAbierta ? anguloMetaAbierta : 0f;
-        float vel = (estaAbierta && abiertaPorAnomalia) ? velocidadGiroAnomalia : velocidadGiro;
+        float vel = (estaAbierta && abiertaPorAnomalia) ? velocidadGiroAnomalia : (cierreEsAzote && !estaAbierta ? velocidadGiro * 2.2f : velocidadGiro);
 
         if (Mathf.Abs(anguloActual - objetivo) > 0.05f)
         {
